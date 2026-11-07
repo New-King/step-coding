@@ -40,10 +40,11 @@ class WriteIn(BaseModel):
 
 @app.post("/api/plan-files")
 def post_plan(body: PlanIn) -> dict[str, Any]:
+    """先判断这句话是不是活儿；不是就只回一句话，别开工。"""
     if not body.task.strip():
         raise HTTPException(status_code=400, detail="任务不能为空")
     try:
-        return {"files": agent.plan_files(body.task)}
+        return agent.decide(body.task)
     except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

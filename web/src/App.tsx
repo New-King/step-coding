@@ -155,17 +155,27 @@ export default function App() {
 
   async function start(task: string) {
     const p = playerRef.current!;
-    setMessages([{ role: "user", text: task }]);
+    setMessages((m) => [...m, { role: "user", text: task }]);
     setBusy(true);
     setError(null);
     setPaths([]);
     taskRef.current = task;
+    setShowPreview(false);
     p.resetForTask();
     phaseRef.current = "planning";
 
     setThinking(true);
     try {
       const data = await postJson("/api/plan-files", { task });
+
+      // 不是活儿：只回一句，别开工
+      if (data.intent === "chat") {
+        setMessages((m) => [...m, { role: "agent", text: data.reply }]);
+        setBusy(false);
+        phaseRef.current = "idle";
+        return;
+      }
+
       planRef.current = data.files as string[];
       queueRef.current = [...planRef.current];
       setMessages((m) => [

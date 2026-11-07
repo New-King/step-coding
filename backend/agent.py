@@ -87,14 +87,65 @@ def _chat(messages: list[dict[str, str]], max_tokens: int = MAX_TOKENS) -> str:
 
 # ---------------------------------------------------------------- 第一步：定文件
 
-PLAN_SYSTEM = """你是一个写代码的助手。用户会给你一个任务，你只需要决定要写哪几个文件。
+DECIDE_SYSTEM = """你先判断用户这句话是在**让你写代码/做东西**，还是在打招呼、闲聊、提问。
 
-只输出文件名，每行一个，按创建顺序排列。不要解释，不要编号，不要代码块。
-路径用相对路径，最多 5 个文件。比如：
+严格按下面的格式输出，不要解释：
 
+INTENT: chat
+REPLY: 一句自然的回复，30 字以内
+
+或者
+
+INTENT: build
+REPLY:
+FILES:
 index.html
 style.css
-game.js"""
+game.js
+
+判断规则：
+- 明确要做某个东西（"做一个贪吃蛇""写个待办清单""帮我做个落地页"）→ build
+- 打招呼、寒暄、问你是谁/能干什么、问与做东西无关的问题 → chat
+- 只给了模糊方向（"做个网站"）→ build，按最合理的理解列文件
+- build 时，FILES 里最多 5 个文件，按创建顺序排列"""
+
+
+def decide(task: str) -> dict[str, Any]:
+    """先分意图，再决定要不要列文件。打招呼不该开工。"""
+    text = _chat(
+        [
+            {"role": "system", "content": DECIDE_SYSTEM},
+            {"role": "user", "content": task},
+        ],
+        max_tokens=300,
+    )
+
+    intent = "build"
+    reply = ""
+    files: list[str] = []
+
+    for line in text.splitlines():
+        line = line.strip()
+        upper = line.upper()
+        if upper.startswith("INTENT:"):
+            value = line.split(":", 1)[1].strip().lower()
+            if "chat" in value:
+                intent = "chat"
+        elif upper.startswith("REPLY:"):
+            reply = line.split(":", 1)[1].strip().strip('"')
+        elif re.match(r"^[\w\-./]+\.[A-Za-z0-9]{1,6}$", line):
+            if line not in files and len(files) < MAX_FILES:
+                files.append(line)
+
+    if intent == "chat":
+        return {"intent": "chat", "reply": reply or "你好，想让我做个什么？", "files": []}
+
+    if not files:
+        # 说要做但没给文件，退回固定三件套，别让用户卡住
+        files = ["index.html", "style.css", "script.js"]
+
+    return {"intent": "build", "reply": "", "files": files}
+
 
 
 def plan_files(task: str) -> list[str]:

@@ -20,6 +20,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;      /* 外壳定高定宽，页面本身不滚 */
 }
 
 body {
@@ -60,6 +61,13 @@ button {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.name,
+.logo {
+  flex: 0 0 auto;
 }
 
 .logo {
@@ -89,6 +97,7 @@ button {
 
 .controls {
   margin-left: auto;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
