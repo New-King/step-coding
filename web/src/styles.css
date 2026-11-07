@@ -648,3 +648,108 @@ button {
   line-height: 1.8;
   padding-top: 8px;
 }
+
+/* ---------------------------------------------------------------- 工作区 */
+
+.tree-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tt-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-close {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.tree-close:hover {
+  color: var(--ink);
+}
+
+.ws-open {
+  display: flex;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+
+.ws-open input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: #0b0e14;
+  color: var(--ink);
+  outline: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ws-open input:focus {
+  border-color: #2c4a6e;
+}
+
+.ws-open button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 0;
+  background: #232a38;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  flex: 0 0 auto;
+}
+
+.ws-open button:hover {
+  background: #2b3444;
+  color: var(--ink);
+}
+
+.ws-error {
+  color: #ff8a80;
+  font-size: 10.5px;
+  flex-basis: 100%;
+}
+
+.tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 0 8px 12px;
+}
+
+.file.ws {
+  cursor: pointer;
+  gap: 0;
+}
+
+.file.ws.dir {
+  color: var(--muted);
+  font-weight: 600;
+  cursor: default;
+}
+
+.file.ws.dir .fname {
+  font-size: 11.5px;
+}
+
+.file.ws .fname {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

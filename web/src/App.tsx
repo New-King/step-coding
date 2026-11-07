@@ -22,11 +22,21 @@ const EMPTY: Snapshot = {
 
 type Msg = { role: "user" | "agent"; text: string };
 
+type WsFile = { path: string; name: string; depth: number; type: "file" | "dir"; size?: number };
+type Ws = {
+  root: string | null;
+  name?: string;
+  files: WsFile[];
+  total: number;
+  truncated: boolean;
+};
+
 type Written = {
   path: string;
   say: string;
   sections: { note: string; code: string }[];
   content: string;
+  written?: boolean;
 };
 
 function langOf(path: string) {
@@ -87,6 +97,10 @@ export default function App() {
   const [showPreview, setShowPreview] = useState(false);
   const [paths, setPaths] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [ws, setWs] = useState<Ws | null>(null);
+  const [openPath, setOpenPath] = useState("");
+  const [wsError, setWsError] = useState<string | null>(null);
+  const [viewFile, setViewFile] = useState<{ path: string; content: string } | null>(null);
 
   const codeRef = useRef<HTMLDivElement | null>(null);
   const taskRef = useRef("");
@@ -108,6 +122,17 @@ export default function App() {
       if (queueRef.current.length > 0) void writeNext(queueRef.current.shift()!);
       else finishUp();
     };
+    const wantFile = new URLSearchParams(window.location.search).get("file");
+    fetch("/api/workspace")
+      .then((r) => r.json())
+      .then((data: Ws) => {
+        setWs(data);
+        if (wantFile && data.root) {
+          void selectFile(wantFile);
+        }
+      })
+      .catch(() => {});
+
     const autoTask = new URLSearchParams(window.location.search).get("task");
     if (autoTask && !autoRan.current) {
       autoRan.current = true;
@@ -133,6 +158,12 @@ export default function App() {
         files: p.files(),
       });
       setMessages((m) => [...m, { role: "agent", text: data.say || `正在写 ${path}` }]);
+      if (data.written) {
+        fetch("/api/workspace")
+          .then((r) => r.json())
+          .then((next: Ws) => setWs(next))
+          .catch(() => {});
+      }
       p.push(stepsForFile(data));
     } catch (e) {
       const text = String(e).replace(/^Error:\s*/, "");
@@ -161,6 +192,7 @@ export default function App() {
     setPaths([]);
     taskRef.current = task;
     setShowPreview(false);
+    setViewFile(null);
     p.resetForTask();
     phaseRef.current = "planning";
 
@@ -212,6 +244,50 @@ export default function App() {
       return text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string));
     }
   }, [active, text]);
+
+  const openWorkspace = async (path: string) => {
+    if (!path.trim()) return;
+    setWsError(null);
+    try {
+      const res = await fetch("/api/workspace/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: path.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "打不开");
+      setWs(data);
+      setOpenPath("");
+    } catch (e) {
+      setWsError(String(e).replace(/^Error:\s*/, ""));
+    }
+  };
+
+  const closeWorkspace = async () => {
+    const res = await fetch("/api/workspace/close", { method: "POST" });
+    setWs(await res.json());
+    setViewFile(null);
+  };
+
+  const selectFile = async (path: string) => {
+    try {
+      const res = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "读不了");
+      setViewFile({ path, content: data.content });
+    } catch (e) {
+      setError(String(e).replace(/^Error:\s*/, ""));
+    }
+  };
+
+  const viewHtml = useMemo(() => {
+    if (!viewFile) return "";
+    try {
+      return hljs.highlight(viewFile.content, { language: langOf(viewFile.path) }).value;
+    } catch {
+      return viewFile.content;
+    }
+  }, [viewFile]);
 
   const toggle = () => {
     const p = playerRef.current!;
@@ -271,38 +347,87 @@ export default function App() {
 
       <main className="body">
         <aside className="tree">
-          <div className="tree-title">文件</div>
-          {paths.length === 0 && <div className="tree-empty">还没有文件</div>}
-          {paths.map((path) => (
-            <div
-              key={path}
-              className={`file ${active === path ? "active" : ""} ${
-                (snap.buffers[path] ?? "").length > 0 ? "has" : ""
-              }`}
-            >
-              <span className="dot" />
-              <span className="fname">{path}</span>
+          <div className="tree-title">
+            <span className="tt-name">{ws?.root ? ws.name || "项目" : "生成的文件"}</span>
+            {ws?.root && (
+              <button className="tree-close" title="关闭项目" onClick={() => void closeWorkspace()}>
+                ×
+              </button>
+            )}
+          </div>
+
+          {!ws?.root && (
+            <div className="ws-open">
+              <input
+                value={openPath}
+                onChange={(e) => setOpenPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void openWorkspace(openPath);
+                }}
+                placeholder="/Users/you/project"
+              />
+              <button onClick={() => void openWorkspace(openPath)}>打开</button>
+              {wsError && <div className="ws-error">{wsError}</div>}
             </div>
-          ))}
+          )}
+
+          {ws?.root ? (
+            <div className="tree-scroll">
+              {ws.files.map((f) => (
+                <div
+                  key={`${f.type}-${f.path}`}
+                  className={`file ws ${f.type} ${viewFile?.path === f.path ? "active" : ""}`}
+                  style={{ paddingLeft: 8 + f.depth * 12 }}
+                  onClick={() => {
+                    if (f.type === "file") void selectFile(f.path);
+                  }}
+                >
+                  <span className="fname">{f.name}</span>
+                </div>
+              ))}
+              {ws.truncated && <div className="tree-empty">文件太多，已截断</div>}
+            </div>
+          ) : (
+            <>
+              {paths.length === 0 && <div className="tree-empty">还没有文件</div>}
+              {paths.map((path) => (
+                <div
+                  key={path}
+                  className={`file ${active === path ? "active" : ""} ${
+                    (snap.buffers[path] ?? "").length > 0 ? "has" : ""
+                  }`}
+                >
+                  <span className="dot" />
+                  <span className="fname">{path}</span>
+                </div>
+              ))}
+            </>
+          )}
         </aside>
 
         <section className="editor">
           <div className="tabs">
-            {paths.map((path) => (
-              <div key={path} className={`tab ${active === path ? "active" : ""}`}>
-                {path}
-              </div>
-            ))}
+            {viewFile ? (
+              <div className="tab active">{viewFile.path}</div>
+            ) : (
+              paths.map((path) => (
+                <div key={path} className={`tab ${active === path ? "active" : ""}`}>
+                  {path}
+                </div>
+              ))
+            )}
           </div>
           <div className="code" ref={codeRef}>
-            {text ? (
+            {viewFile ? (
+              <pre dangerouslySetInnerHTML={{ __html: viewHtml }} />
+            ) : text ? (
               <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
             ) : (
               <div className="placeholder">
-                在右边描述你要做的东西，它会一个文件一个文件写出来
+                打开一个本地项目看代码，或者在右边描述你要做的东西
               </div>
             )}
-            <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+            {!viewFile && <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />}
           </div>
         </section>
 

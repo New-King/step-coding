@@ -1,12 +1,10 @@
 """Step Coding 后端。
 
-主接口是 `/api/step`：前端播完一步，带着当前文件状态来问下一步。
+两条线：
+  1. 生成：/api/plan-files、/api/write —— 模型决定写哪个文件、写什么
+  2. 工作区：/api/workspace/* —— 打开真实的本地目录，读文件、写文件
 
-为什么是"播放器驱动后端"而不是流式推送：
-  - 播完一步才知道文件真实长什么样，下一步必须基于它
-  - 所以循环的控制权在前端，后端只负责决策
-
-`/api/plan` 保留了一个固定回放，用来在没有 key 时也能演示界面。
+打开了工作区之后，/api/write 会把内容真的落到磁盘上；没打开就只回给前端。
 """
 
 from __future__ import annotations
@@ -20,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import agent
+from .workspace import WorkspaceError, workspace as ws
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -38,6 +37,15 @@ class WriteIn(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
 
 
+class OpenIn(BaseModel):
+    path: str
+
+
+class SaveIn(BaseModel):
+    path: str
+    content: str
+
+
 @app.post("/api/plan-files")
 def post_plan(body: PlanIn) -> dict[str, Any]:
     """先判断这句话是不是活儿；不是就只回一句话，别开工。"""
@@ -52,9 +60,57 @@ def post_plan(body: PlanIn) -> dict[str, Any]:
 @app.post("/api/write")
 def post_write(body: WriteIn) -> dict[str, Any]:
     try:
-        return agent.write_file(body.task, body.path, body.files, body.plan or [body.path])
+        result = agent.write_file(body.task, body.path, body.files, body.plan or [body.path])
     except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # 打开了工作区就真的写盘；写失败不影响播放，但要让前端知道
+    if ws.root is not None:
+        try:
+            ws.write(result["path"], result["content"])
+            result["written"] = True
+        except WorkspaceError as exc:
+            result["written"] = False
+            result["writeError"] = str(exc)
+
+    return result
+
+
+# ------------------------------------------------------------------ 工作区
+
+@app.get("/api/workspace")
+def get_workspace() -> dict[str, Any]:
+    return ws.snapshot()
+
+
+@app.post("/api/workspace/open")
+def open_workspace(body: OpenIn) -> dict[str, Any]:
+    try:
+        return ws.open(body.path)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/workspace/close")
+def close_workspace() -> dict[str, Any]:
+    ws.close()
+    return ws.snapshot()
+
+
+@app.get("/api/workspace/file")
+def read_workspace_file(path: str) -> dict[str, Any]:
+    try:
+        return ws.read(path)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/workspace/save")
+def save_workspace_file(body: SaveIn) -> dict[str, Any]:
+    try:
+        return ws.write(body.path, body.content)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/health")

@@ -1,0 +1,144 @@
+"""工作区：让 agent 在一个真实的本地目录里干活。
+
+第一版只做三件事：列目录、读文件、写文件。
+命令执行、文件监听、git 都还没有。
+
+安全边界：所有路径都必须落在 root 之内，`..` 直接拒绝。
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+# 目录太大、或者纯属噪音，列目录时跳过
+IGNORE = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    ".next", ".nuxt", "target", "vendor", ".idea", ".vscode", ".DS_Store",
+    ".pnpm-store", "coverage", ".cache", ".turbo",
+}
+
+MAX_FILES = 3000
+MAX_DEPTH = 6
+MAX_READ = 200_000
+
+
+class WorkspaceError(RuntimeError):
+    pass
+
+
+class Workspace:
+    def __init__(self) -> None:
+        self.root: Path | None = None
+
+    # ------------------------------------------------------------ 打开
+
+    def open(self, path: str) -> dict[str, Any]:
+        target = Path(os.path.expanduser(path)).resolve()
+        if not target.exists():
+            raise WorkspaceError(f"目录不存在：{target}")
+        if not target.is_dir():
+            raise WorkspaceError(f"不是目录：{target}")
+
+        self.root = target
+        return self.snapshot()
+
+    def close(self) -> None:
+        self.root = None
+
+    # ------------------------------------------------------------ 安全
+
+    def resolve(self, rel: str) -> Path:
+        if self.root is None:
+            raise WorkspaceError("还没有打开项目")
+        clean = rel.lstrip("/").replace("\\", "/")
+        target = (self.root / clean).resolve()
+        try:
+            target.relative_to(self.root)
+        except ValueError:
+            raise WorkspaceError(f"路径越界：{rel}") from None
+        return target
+
+    # ------------------------------------------------------------ 读
+
+    def snapshot(self) -> dict[str, Any]:
+        if self.root is None:
+            return {"root": None, "files": [], "total": 0, "truncated": False}
+
+        files: list[dict[str, Any]] = []
+        state = {"truncated": False}
+
+        def walk(directory: Path, depth: int) -> None:
+            if state["truncated"] or depth > MAX_DEPTH:
+                return
+            try:
+                entries = sorted(
+                    directory.iterdir(), key=lambda e: (e.is_file(), e.name.lower())
+                )
+            except OSError:
+                return
+
+            for entry in entries:
+                name = entry.name
+                if name.startswith(".") or name in IGNORE:
+                    continue
+                rel = entry.relative_to(self.root).as_posix()
+
+                if entry.is_dir():
+                    files.append({"path": rel, "name": name, "depth": depth, "type": "dir"})
+                    if len(files) >= MAX_FILES:
+                        state["truncated"] = True
+                        return
+                    walk(entry, depth + 1)
+                else:
+                    try:
+                        size = entry.stat().st_size
+                    except OSError:
+                        size = 0
+                    files.append(
+                        {
+                            "path": rel,
+                            "name": name,
+                            "depth": depth,
+                            "type": "file",
+                            "size": size,
+                        }
+                    )
+                    if len(files) >= MAX_FILES:
+                        state["truncated"] = True
+                        return
+
+        walk(self.root, 0)
+
+        return {
+            "root": str(self.root),
+            "name": self.root.name,
+            "files": files,
+            "total": len(files),
+            "truncated": state["truncated"],
+        }
+
+    def read(self, rel: str) -> dict[str, Any]:
+        path = self.resolve(rel)
+        if not path.exists() or not path.is_file():
+            raise WorkspaceError(f"文件不存在：{rel}")
+        if path.stat().st_size > MAX_READ:
+            raise WorkspaceError(f"文件太大（>{MAX_READ // 1000}KB），先不支持")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise WorkspaceError(f"不是文本文件：{rel}") from None
+        return {"path": rel, "content": text, "size": len(text)}
+
+    # ------------------------------------------------------------ 写
+
+    def write(self, rel: str, content: str) -> dict[str, Any]:
+        path = self.resolve(rel)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existed = path.exists()
+        path.write_text(content, encoding="utf-8")
+        return {"path": rel, "created": not existed, "bytes": len(content)}
+
+
+workspace = Workspace()
