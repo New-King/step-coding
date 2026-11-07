@@ -3,6 +3,7 @@ export type Step =
   | { type: "create"; path: string; banner: string; delay?: number }
   | { type: "open"; path: string; banner: string; delay?: number }
   | { type: "append"; path: string; text: string; banner: string }
+  | { type: "banner"; text: string; delay?: number }
   | { type: "run"; cmd: string; banner: string; delay?: number }
   | { type: "done"; text: string; delay?: number };
 
@@ -39,7 +40,7 @@ export class Player {
   private carry = 0;
   private last = 0;
   private waitUntil = 0;
-  private raf = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
   paused = false;
   cps = 45;
@@ -51,6 +52,31 @@ export class Player {
 
   onUpdate: (snap: Snapshot) => void = () => {};
   onFinish: () => void = () => {};
+  onExhausted: () => void = () => {};
+
+  private waiting = false;
+  private running = false;
+
+  /** 边播边追加：真 agent 是一步一步给动作的。 */
+  push(steps: Step[]) {
+    this.steps.push(...steps);
+    this.waiting = false;
+    // 有内容才开始跑；空转只会白烧时间
+    if (!this.running) this.start();
+  }
+
+  /** 队列清空但还没结束 —— 前端据此去问下一步。 */
+  private checkExhausted() {
+    if (this.waiting || this.finished) return;
+    if (this.cursor >= this.steps.length) {
+      this.waiting = true;
+      this.onExhausted();
+    }
+  }
+
+  files(): Record<string, string> {
+    return { ...this.buffers };
+  }
 
   load(plan: Plan) {
     this.steps = plan.steps;
@@ -67,17 +93,20 @@ export class Player {
     this.say = "";
     this.active = Object.keys(plan.files)[0] ?? null;
     this.emit();
-    this.start();
+    if (this.steps.length) this.start();
   }
 
   start() {
-    cancelAnimationFrame(this.raf);
+    if (this.timer) clearTimeout(this.timer);
+    this.running = true;
     this.last = performance.now();
-    this.raf = requestAnimationFrame(this.tick);
+    this.timer = setTimeout(this.tick, 16);
   }
 
   stop() {
-    cancelAnimationFrame(this.raf);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 
   reset() {
@@ -93,6 +122,25 @@ export class Player {
     this.say = "";
     this.emit();
     this.start();
+  }
+
+  /** 新任务：清空并重新开始。 */
+  resetForTask() {
+    this.stop();
+    this.steps = [];
+    this.cursor = 0;
+    this.buffers = {};
+    this.pending = "";
+    this.pendingPath = "";
+    this.carry = 0;
+    this.waitUntil = 0;
+    this.finished = false;
+    this.paused = false;
+    this.waiting = false;
+    this.banner = "准备开始";
+    this.say = "";
+    this.active = null;
+    this.emit();
   }
 
   /** 直接跳到第 n 步（用于截图、深链、或"跳过前面"）。 */
@@ -127,6 +175,9 @@ export class Player {
           this.banner = step.banner;
           this.buffers[step.path] = (this.buffers[step.path] ?? "") + step.text;
           break;
+        case "banner":
+          this.banner = step.text;
+          break;
         case "run":
           this.banner = step.banner;
           this.say = `$ ${step.cmd}`;
@@ -147,17 +198,18 @@ export class Player {
     this.start();
   }
 
-  private tick = (now: number) => {
+  private tick = () => {
+    const now = performance.now();
     const dt = Math.min(now - this.last, 120);
     this.last = now;
 
     if (this.paused) {
-      this.raf = requestAnimationFrame(this.tick);
+      this.timer = setTimeout(this.tick, 16);
       return;
     }
 
     if (now < this.waitUntil) {
-      this.raf = requestAnimationFrame(this.tick);
+      this.timer = setTimeout(this.tick, 16);
       return;
     }
 
@@ -179,17 +231,12 @@ export class Player {
       this.advance(now);
     }
 
-    this.raf = requestAnimationFrame(this.tick);
+    this.timer = setTimeout(this.tick, 16);
   };
 
   private advance(now: number) {
     if (this.cursor >= this.steps.length) {
-      if (!this.finished) {
-        this.finished = true;
-        this.banner = "完成";
-        this.emit();
-        this.onFinish();
-      }
+      this.checkExhausted();
       return;
     }
 
@@ -218,6 +265,10 @@ export class Player {
         this.pending = step.text;
         this.pendingPath = step.path;
         break;
+      case "banner":
+        this.banner = step.text;
+        this.waitUntil = now + (step.delay ?? 340);
+        break;
       case "run":
         this.banner = step.banner;
         this.say = `$ ${step.cmd}`;
@@ -226,7 +277,10 @@ export class Player {
       case "done":
         this.banner = "完成";
         this.say = step.text;
+        this.finished = true;
         this.waitUntil = now + (step.delay ?? 500);
+        this.emit();
+        this.onFinish();
         break;
     }
 

@@ -493,3 +493,149 @@ button {
   border-radius: 10px;
   border: 3px solid var(--bg);
 }
+
+/* ---------------------------------------------------------------- 对话栏 */
+
+.body {
+  grid-template-columns: 176px minmax(0, 1fr) 316px;
+}
+
+.chat {
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-head {
+  height: 34px;
+  flex: 0 0 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+
+.chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.chip:hover {
+  background: #171d28;
+  color: var(--ink);
+}
+
+.msg {
+  font-size: 12.5px;
+  line-height: 1.65;
+  padding: 8px 11px;
+  border-radius: 10px;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: #1d2a3d;
+  color: #cfe0ff;
+}
+
+.msg.agent {
+  align-self: flex-start;
+  background: #141a24;
+  color: var(--ink-2);
+}
+
+.msg.agent.thinking {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2);
+  background: #0b0e14;
+  color: var(--ink);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.chat-form input:focus {
+  border-color: #2c4a6e;
+}
+
+.chat-form button {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent);
+  color: #05231a;
+  font-weight: 650;
+  font-size: 12.5px;
+}
+
+.chat-form button:disabled {
+  background: #222a36;
+  color: #4d5566;
+  cursor: not-allowed;
+}
+
+.chat-error {
+  padding: 8px 12px;
+  color: #ff8a80;
+  font-size: 11.5px;
+  border-top: 1px solid var(--line);
+}
+
+.tree-empty {
+  padding: 4px 8px;
+  color: #4d5566;
+  font-size: 11.5px;
+}
+
+.placeholder {
+  color: #3c4553;
+  font-size: 12.5px;
+  line-height: 1.8;
+  padding-top: 8px;
+}
