@@ -9,6 +9,8 @@ hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("css", css);
 hljs.registerLanguage("xml", xml);
 
+const WS_KEY = "stepcoding.workspace";
+
 const EMPTY: Snapshot = {
   buffers: {},
   active: null,
@@ -122,16 +124,7 @@ export default function App() {
       if (queueRef.current.length > 0) void writeNext(queueRef.current.shift()!);
       else finishUp();
     };
-    const wantFile = new URLSearchParams(window.location.search).get("file");
-    fetch("/api/workspace")
-      .then((r) => r.json())
-      .then((data: Ws) => {
-        setWs(data);
-        if (wantFile && data.root) {
-          void selectFile(wantFile);
-        }
-      })
-      .catch(() => {});
+    void restoreWorkspace();
 
     const autoTask = new URLSearchParams(window.location.search).get("task");
     if (autoTask && !autoRan.current) {
@@ -146,6 +139,35 @@ export default function App() {
   useEffect(() => {
     if (codeRef.current) codeRef.current.scrollTop = codeRef.current.scrollHeight;
   }, [snap.buffers, snap.active]);
+
+  // 工作区记在浏览器里：没开过就是空的，开过刷新才恢复
+  async function restoreWorkspace() {
+    const empty: Ws = { root: null, files: [], total: 0, truncated: false };
+    const saved = localStorage.getItem(WS_KEY);
+    const wantFile = new URLSearchParams(window.location.search).get("file");
+
+    if (!saved) {
+      // 把服务端可能残留的状态也清掉
+      await fetch("/api/workspace/close", { method: "POST" }).catch(() => {});
+      setWs(empty);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/workspace/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: saved }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error();
+      setWs(data);
+      if (wantFile) void selectFile(wantFile);
+    } catch {
+      localStorage.removeItem(WS_KEY);
+      setWs(empty);
+    }
+  }
 
   async function writeNext(path: string) {
     const p = playerRef.current!;
@@ -258,12 +280,14 @@ export default function App() {
       if (!res.ok) throw new Error(data.detail || "打不开");
       setWs(data);
       setOpenPath("");
+      localStorage.setItem(WS_KEY, data.root);
     } catch (e) {
       setWsError(String(e).replace(/^Error:\s*/, ""));
     }
   };
 
   const closeWorkspace = async () => {
+    localStorage.removeItem(WS_KEY);
     const res = await fetch("/api/workspace/close", { method: "POST" });
     setWs(await res.json());
     setViewFile(null);
