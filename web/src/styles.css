@@ -1270,3 +1270,149 @@ body {
 .ws-manual .ws-open {
   padding-top: 8px;
 }
+
+/* ================================================================
+   交互打磨：空白态、步骤条、切换动画、删除按钮
+   ================================================================ */
+
+/* ---- 空白态：不再是一整块黑 ---- */
+.editor.blank {
+  background: var(--panel);
+  box-shadow: var(--card-shadow);
+}
+
+.blank-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 40px;
+}
+
+.blank-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: #f0f0f3;
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.blank-mark::after {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border-radius: 4px;
+  background: #dcdce2;
+}
+
+.blank-stage h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.1px;
+}
+
+.blank-stage p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+/* ---- 步骤条：从一条细线变成一张卡片 ---- */
+.banner {
+  margin: 14px 20px 10px;
+  height: 42px;
+  flex: 0 0 42px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-radius: 11px;
+  box-shadow: var(--card-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.banner.done {
+  box-shadow: var(--card-shadow);
+}
+
+.banner .pulse {
+  width: 7px;
+  height: 7px;
+}
+
+.banner-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.1px;
+  animation: step-in 0.34s var(--ease) both;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.banner-progress {
+  bottom: 0;
+  height: 2px;
+}
+
+.banner-progress i {
+  border-radius: 0 2px 2px 0;
+  background: var(--ink);
+  opacity: 0.75;
+}
+
+/* ---- 切换文件时的淡入 ---- */
+.code-inner {
+  animation: code-in 0.22s var(--ease) both;
+}
+
+@keyframes code-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- 文件行删除 ---- */
+.file-del {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  display: grid;
+  place-items: center;
+  transition: opacity 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.file:hover .file-del {
+  opacity: 1;
+}
+
+.file-del:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: #b3261e;
+}
