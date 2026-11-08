@@ -1416,3 +1416,132 @@ body {
   background: rgba(0, 0, 0, 0.07);
   color: #b3261e;
 }
+
+/* ================================================================
+   欢迎页：没有项目时只显示这一屏（不出现三栏、不出现菜单）
+   ================================================================ */
+
+.welcome {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  padding: 40px;
+}
+
+.welcome-inner {
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+  animation: rise 0.4s var(--ease) both;
+}
+
+.welcome-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent);
+  margin: 0 auto 20px;
+  position: relative;
+}
+
+.welcome-mark::after {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.welcome-inner h1 {
+  margin: 0 0 8px;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+}
+
+.welcome-inner p {
+  margin: 0 0 26px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.welcome-open {
+  height: 40px;
+  padding: 0 24px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s var(--ease);
+}
+
+.welcome-open:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.welcome-open:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.welcome-open:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.welcome-recent {
+  margin-top: 44px;
+  text-align: left;
+}
+
+.wr-title {
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 2px 8px;
+}
+
+.wr-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background 0.2s var(--ease);
+}
+
+.wr-item:hover {
+  background: rgba(0, 0, 0, 0.045);
+}
+
+.wr-name {
+  font-size: 12.5px;
+  color: var(--ink);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wr-path {
+  font-size: 11px;
+  color: var(--ink-faint);
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-error {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: #b3261e;
+  line-height: 1.6;
+}

@@ -383,6 +383,36 @@ export default function App() {
 
   const progress = snap.total ? Math.round((snap.stepIndex / snap.total) * 100) : 0;
 
+  if (!ws?.root) {
+    return (
+      <div className="welcome">
+        <div className="welcome-inner">
+          <div className="welcome-mark" />
+          <h1>Step Coding</h1>
+          <p>选一个文件夹，它会在里面写代码。每一步你都看得见。</p>
+
+          <button className="welcome-open" onClick={() => void pickWorkspace()} disabled={picking}>
+            {picking ? "等待选择…" : "打开项目文件夹"}
+          </button>
+
+          {recent.length > 0 && (
+            <div className="welcome-recent">
+              <div className="wr-title">最近打开</div>
+              {recent.map((path) => (
+                <button key={path} className="wr-item" onClick={() => void openWorkspace(path)}>
+                  <span className="wr-name">{path.split("/").filter(Boolean).pop()}</span>
+                  <span className="wr-path">{path.replace(/^\/Users\/[^/]+/, "~")}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {wsError && <div className="welcome-error">{wsError}</div>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="bar">
@@ -430,37 +460,14 @@ export default function App() {
 
       <main className="body">
         <aside className="tree">
-          {ws?.root ? (
-            <div className="tree-title">
-              <span className="tt-name">{ws.name || "项目"}</span>
-              <button className="tree-close" title="关闭项目" onClick={() => void closeWorkspace()}>
-                ×
-              </button>
-            </div>
-          ) : (
-            <div className="ws-pick">
-              <button className="ws-pick-btn" onClick={() => void pickWorkspace()} disabled={picking}>
-                {picking ? "等待选择…" : "选择项目文件夹"}
-              </button>
+          <div className="tree-title">
+            <span className="tt-name">{ws.name || "项目"}</span>
+            <button className="tree-close" title="关闭项目" onClick={() => void closeWorkspace()}>
+              ×
+            </button>
+          </div>
 
-              {recent.length > 0 && (
-                <div className="ws-recent">
-                  <div className="ws-recent-title">最近</div>
-                  {recent.map((path) => (
-                    <button key={path} className="ws-recent-item" onClick={() => void openWorkspace(path)}>
-                      {path.split("/").filter(Boolean).pop()}
-                      <span>{path.replace(/^\/Users\/[^/]+/, "~")}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {wsError && <div className="ws-error">{wsError}</div>}
-            </div>
-          )}
-
-          {ws?.root ? (
-            <div className="tree-scroll">
+          <div className="tree-scroll">
               {ws.files.map((f) => (
                 <div
                   key={`${f.type}-${f.path}`}
@@ -486,34 +493,10 @@ export default function App() {
                 </div>
               ))}
               {ws.truncated && <div className="tree-empty">文件太多，已截断</div>}
-            </div>
-          ) : (
-            <>
-              {paths.length === 0 && ws?.root && <div className="tree-empty">还没有文件</div>}
-              {paths.map((path) => (
-                <div
-                  key={path}
-                  className={`file ${active === path ? "active" : ""} ${
-                    (snap.buffers[path] ?? "").length > 0 ? "has" : ""
-                  }`}
-                >
-                  <span className="dot" />
-                  <span className="fname">{path}</span>
-                </div>
-              ))}
-            </>
-          )}
+          </div>
         </aside>
 
-        <section className={`editor ${ws?.root ? "" : "blank"}`}>
-          {!ws?.root ? (
-            <div className="blank-stage">
-              <div className="blank-mark" />
-              <h2>还没有选择项目</h2>
-              <p>在左边选一个文件夹，它会把代码写在那里。</p>
-            </div>
-          ) : (
-            <>
+        <section className="editor">
           <div className="tabs">
             {viewFile ? (
               <div className="tab active">{viewFile.path}</div>
@@ -539,8 +522,6 @@ export default function App() {
               <div className="placeholder">从左边选一个文件</div>
             )}
           </div>
-            </>
-          )}
         </section>
 
         <aside className="chat">
@@ -548,20 +529,10 @@ export default function App() {
           <div className="chat-log">
             {messages.length === 0 && (
               <div className="chat-hint">
-                {ws?.root ? (
-                  <>
-                    试试：
-                    <button className="chip" onClick={() => void start("做一个贪吃蛇小游戏")}>
-                      做一个贪吃蛇
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    先选一个项目文件夹，
-                    <br />
-                    它才知道把代码写到哪里。
-                  </>
-                )}
+                试试：
+                <button className="chip" onClick={() => void start("做一个贪吃蛇小游戏")}>
+                  做一个贪吃蛇
+                </button>
               </div>
             )}
             {messages.map((m, i) => (
@@ -584,10 +555,10 @@ export default function App() {
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder={!ws?.root ? "先选择项目文件夹" : busy ? "正在写…" : "描述你要做的东西"}
-              disabled={busy || !ws?.root}
+              placeholder={busy ? "正在写…" : "描述你要做的东西"}
+              disabled={busy}
             />
-            <button disabled={busy || !ws?.root || !draft.trim()}>{busy ? "…" : "发送"}</button>
+            <button disabled={busy || !draft.trim()}>{busy ? "…" : "发送"}</button>
           </form>
           {error && <div className="chat-error">{error}</div>}
         </aside>
