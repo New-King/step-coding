@@ -131,6 +131,22 @@ class Workspace:
             raise WorkspaceError(f"不是文本文件：{rel}") from None
         return {"path": rel, "content": text, "size": len(text)}
 
+    # ------------------------------------------------------------ 删
+
+    def delete(self, rel: str) -> dict[str, Any]:
+        path = self.resolve(rel)
+        if path == self.root:
+            raise WorkspaceError("不能删除工作区根目录")
+        if not path.exists():
+            raise WorkspaceError(f"文件不存在：{rel}")
+        if path.is_dir():
+            if any(path.iterdir()):
+                raise WorkspaceError(f"目录非空，先删里面的文件：{rel}")
+            path.rmdir()
+        else:
+            path.unlink()
+        return {"path": rel, "deleted": True}
+
     # ------------------------------------------------------------ 写
 
     def write(self, rel: str, content: str) -> dict[str, Any]:
@@ -142,3 +158,29 @@ class Workspace:
 
 
 workspace = Workspace()
+
+
+def pick_folder(prompt: str = "选择一个项目文件夹") -> str | None:
+    """弹出系统目录选择框（仅 macOS）。取消或不可用时返回 None。"""
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin":
+        return None
+
+    script = f'POSIX path of (choose folder with prompt "{prompt}")'
+    try:
+        out = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if out.returncode != 0:
+        return None  # 用户点了取消
+
+    path = (out.stdout or "").strip()
+    return path or None

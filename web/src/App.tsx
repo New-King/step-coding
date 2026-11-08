@@ -102,6 +102,14 @@ export default function App() {
   const [ws, setWs] = useState<Ws | null>(null);
   const [openPath, setOpenPath] = useState("");
   const [wsError, setWsError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("stepcoding.recent") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [picking, setPicking] = useState(false);
   const [viewFile, setViewFile] = useState<{ path: string; content: string } | null>(null);
 
   const codeRef = useRef<HTMLDivElement | null>(null);
@@ -287,8 +295,28 @@ export default function App() {
       setWs(data);
       setOpenPath("");
       localStorage.setItem(WS_KEY, data.root);
+      setRecent((prev) => {
+        const next = [data.root, ...prev.filter((p) => p !== data.root)].slice(0, 4);
+        localStorage.setItem("stepcoding.recent", JSON.stringify(next));
+        return next;
+      });
     } catch (e) {
       setWsError(String(e).replace(/^Error:\s*/, ""));
+    }
+  };
+
+  const pickWorkspace = async () => {
+    setWsError(null);
+    setPicking(true);
+    try {
+      const res = await fetch("/api/workspace/pick", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "打不开选择框");
+      if (data.path) await openWorkspace(data.path);
+    } catch (e) {
+      setWsError(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setPicking(false);
     }
   };
 
@@ -387,16 +415,38 @@ export default function App() {
           </div>
 
           {!ws?.root && (
-            <div className="ws-open">
-              <input
-                value={openPath}
-                onChange={(e) => setOpenPath(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void openWorkspace(openPath);
-                }}
-                placeholder="/Users/you/project"
-              />
-              <button onClick={() => void openWorkspace(openPath)}>打开</button>
+            <div className="ws-pick">
+              <button className="ws-pick-btn" onClick={() => void pickWorkspace()} disabled={picking}>
+                {picking ? "等待选择…" : "选择项目文件夹"}
+              </button>
+
+              {recent.length > 0 && (
+                <div className="ws-recent">
+                  <div className="ws-recent-title">最近</div>
+                  {recent.map((path) => (
+                    <button key={path} className="ws-recent-item" onClick={() => void openWorkspace(path)}>
+                      {path.split("/").filter(Boolean).pop()}
+                      <span>{path.replace(/^\/Users\/[^/]+/, "~")}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <details className="ws-manual">
+                <summary>手动输入路径</summary>
+                <div className="ws-open">
+                  <input
+                    value={openPath}
+                    onChange={(e) => setOpenPath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void openWorkspace(openPath);
+                    }}
+                    placeholder="/Users/you/project"
+                  />
+                  <button onClick={() => void openWorkspace(openPath)}>打开</button>
+                </div>
+              </details>
+
               {wsError && <div className="ws-error">{wsError}</div>}
             </div>
           )}

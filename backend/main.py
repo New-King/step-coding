@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import agent
-from .workspace import WorkspaceError, workspace as ws
+from .workspace import WorkspaceError, pick_folder, workspace as ws
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -46,6 +46,10 @@ class SaveIn(BaseModel):
     content: str
 
 
+class DeleteIn(BaseModel):
+    path: str
+
+
 @app.post("/api/plan-files")
 def post_plan(body: PlanIn) -> dict[str, Any]:
     """先判断这句话是不是活儿；不是就只回一句话，别开工。"""
@@ -64,14 +68,17 @@ def post_write(body: WriteIn) -> dict[str, Any]:
     except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # 打开了工作区就真的写盘；写失败不影响播放，但要让前端知道
-    if ws.root is not None:
-        try:
-            ws.write(result["path"], result["content"])
-            result["written"] = True
-        except WorkspaceError as exc:
-            result["written"] = False
-            result["writeError"] = str(exc)
+    # 没有工作区就没有落点，直接拒绝——不然前端演一遍，磁盘上什么都没有
+    if ws.root is None:
+        raise HTTPException(status_code=409, detail="还没有打开项目，文件没有落点")
+
+    try:
+        info = ws.write(result["path"], result["content"])
+        result["written"] = True
+        result["absolute"] = str(ws.root / result["path"])
+        result["created"] = info["created"]
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return result
 
@@ -81,6 +88,12 @@ def post_write(body: WriteIn) -> dict[str, Any]:
 @app.get("/api/workspace")
 def get_workspace() -> dict[str, Any]:
     return ws.snapshot()
+
+
+@app.post("/api/workspace/pick")
+def pick_workspace() -> dict[str, Any]:
+    """弹系统目录选择框。前端拿不到就回退到手输路径。"""
+    return {"path": pick_folder()}
 
 
 @app.post("/api/workspace/open")
@@ -101,6 +114,14 @@ def close_workspace() -> dict[str, Any]:
 def read_workspace_file(path: str) -> dict[str, Any]:
     try:
         return ws.read(path)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/workspace/delete")
+def delete_workspace_file(body: DeleteIn) -> dict[str, Any]:
+    try:
+        return ws.delete(body.path)
     except WorkspaceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
