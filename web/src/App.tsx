@@ -143,8 +143,14 @@ export default function App() {
   // 工作区记在浏览器里：没开过就是空的，开过刷新才恢复
   async function restoreWorkspace() {
     const empty: Ws = { root: null, files: [], total: 0, truncated: false };
-    const saved = localStorage.getItem(WS_KEY);
+    let saved = localStorage.getItem(WS_KEY);
     const wantFile = new URLSearchParams(window.location.search).get("file");
+    // 支持 ?ws=/path 直接打开一个项目（方便分享与截图）
+    const wantWs = new URLSearchParams(window.location.search).get("ws");
+    if (wantWs) {
+      localStorage.setItem(WS_KEY, wantWs);
+      saved = wantWs;
+    }
 
     if (!saved) {
       // 把服务端可能残留的状态也清掉

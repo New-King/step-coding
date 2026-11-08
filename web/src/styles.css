@@ -753,3 +753,430 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ================================================================
+   视觉重做：沿用 newking 的设计语言
+   暖白底 + 墨黑字 + 无彩色强调 + 白卡片 + 柔和阴影 + 深色代码块
+   只覆盖颜色与质感，不动结构。
+   ================================================================ */
+
+:root {
+  --bg: #f5f5f7;
+  --panel: #ffffff;
+  --panel-2: #f7f7f8;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-2: rgba(0, 0, 0, 0.1);
+  --ink: #1d1d1f;
+  --ink-2: #3a3a3c;
+  --muted: #86868b;
+  --accent: #171717;
+  --accent-dim: #e9e9ee;
+
+  --code-bg: #1d1d1f;
+  --code-ink: #e8e8ed;
+  --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* ---- 顶栏 ---- */
+.bar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  height: 54px;
+  flex-basis: 54px;
+}
+
+.logo {
+  background: var(--accent);
+  box-shadow: none;
+  border-radius: 4px;
+  width: 14px;
+  height: 14px;
+}
+
+.name {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.task {
+  color: var(--muted);
+  border-left-color: var(--line);
+}
+
+.counter,
+.cps {
+  color: var(--muted);
+}
+
+.ghost {
+  border-radius: 999px;
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  transition: all 0.2s var(--ease);
+}
+
+.ghost:hover:not(:disabled) {
+  background: #fafafa;
+  border-color: rgba(0, 0, 0, 0.16);
+  color: var(--ink);
+}
+
+.ghost:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.primary {
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+  transition: all 0.2s var(--ease);
+}
+
+.primary:hover {
+  background: #404040;
+}
+
+.primary:active {
+  transform: scale(0.96);
+}
+
+.primary.run {
+  background: var(--accent);
+  color: #fff;
+}
+
+.primary.run:hover {
+  background: #404040;
+}
+
+/* ---- 横幅 ---- */
+.banner {
+  background: transparent;
+  border-bottom: 0;
+  height: 34px;
+  flex-basis: 34px;
+  padding: 0 24px;
+  color: var(--muted);
+}
+
+.banner.done {
+  color: var(--ink);
+}
+
+.pulse {
+  background: var(--ink);
+  box-shadow: none;
+  animation: breathe 1.8s var(--ease) infinite;
+  width: 6px;
+  height: 6px;
+}
+
+.pulse.paused {
+  background: #c7c7cc;
+  animation: none;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.banner-progress i {
+  background: var(--ink);
+  transition: width 0.25s var(--ease);
+}
+
+/* ---- 三栏 → 三张卡片 ---- */
+.body {
+  background: var(--bg);
+  padding: 0 20px 20px;
+  gap: 14px;
+  grid-template-columns: 200px minmax(0, 1fr) 320px;
+}
+
+.tree {
+  border-right: 0;
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  padding: 14px 8px;
+}
+
+.file {
+  border-radius: 7px;
+  color: var(--muted);
+  transition: background 0.2s var(--ease);
+}
+
+.file.active {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.file .dot {
+  background: #d6d6db;
+}
+
+.file.has .dot {
+  background: var(--ink);
+  box-shadow: none;
+}
+
+.tree-foot {
+  color: var(--muted);
+  border-top-color: var(--line);
+}
+
+.tree-empty {
+  color: var(--muted);
+}
+
+.tree-close {
+  color: var(--muted);
+}
+
+.tree-close:hover {
+  color: var(--ink);
+}
+
+.ws-open input {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  border-radius: 7px;
+}
+
+.ws-open input:focus {
+  border-color: rgba(0, 0, 0, 0.24);
+}
+
+.ws-open button {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 7px;
+}
+
+.ws-open button:hover {
+  background: #404040;
+  color: #fff;
+}
+
+.ws-error {
+  color: #b3261e;
+}
+
+/* ---- 编辑器：整页唯一的深色块 ---- */
+.editor {
+  background: var(--code-bg);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.tabs {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  height: 38px;
+  flex-basis: 38px;
+  padding: 0 12px;
+}
+
+.tab {
+  color: rgba(255, 255, 255, 0.36);
+  border-bottom-color: transparent;
+  transition: color 0.2s var(--ease);
+}
+
+.tab.active {
+  color: var(--code-ink);
+  background: transparent;
+  border-bottom-color: rgba(255, 255, 255, 0.8);
+}
+
+.code {
+  color: var(--code-ink);
+  scroll-behavior: auto;
+  padding: 16px 20px 30px;
+}
+
+.code pre {
+  color: var(--code-ink);
+}
+
+.caret {
+  background: rgba(255, 255, 255, 0.85);
+  width: 6px;
+  height: 13px;
+}
+
+.placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+/* ---- 对话 ---- */
+.chat {
+  border-left: 0;
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.chat-head {
+  color: var(--muted);
+  border-bottom-color: var(--line);
+}
+
+.chat-hint {
+  color: var(--muted);
+}
+
+.chip {
+  border-color: var(--line);
+  color: var(--ink-2);
+  background: var(--panel);
+  transition: all 0.2s var(--ease);
+}
+
+.chip:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--ink);
+}
+
+.msg {
+  border-radius: 12px;
+  animation: rise 0.35s var(--ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.msg.user {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.msg.agent {
+  background: #f3f3f5;
+  color: var(--ink-2);
+  border-top-left-radius: 4px;
+}
+
+.msg.agent.thinking {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.chat-form {
+  border-top-color: var(--line);
+  padding: 12px;
+}
+
+.chat-form input {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0 14px;
+  height: 34px;
+  transition: box-shadow 0.2s var(--ease);
+}
+
+.chat-form input:focus {
+  border-color: var(--line);
+  box-shadow: var(--card-shadow);
+}
+
+.chat-form button {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-weight: 500;
+  height: 34px;
+  transition: all 0.2s var(--ease);
+}
+
+.chat-form button:hover:not(:disabled) {
+  background: #404040;
+}
+
+.chat-form button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.chat-form button:disabled {
+  background: #e8e8ec;
+  color: var(--muted);
+}
+
+.chat-error {
+  color: #b3261e;
+  border-top-color: var(--line);
+}
+
+/* ---- 底部叙述条 ---- */
+.say {
+  background: var(--panel);
+  border-top-color: var(--line);
+}
+
+.say-tag {
+  background: #eeeef1;
+  color: var(--muted);
+  border-radius: 5px;
+}
+
+.say-text {
+  color: var(--ink-2);
+}
+
+/* ---- 浮层 ---- */
+.overlay {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: none;
+}
+
+.modal {
+  background: var(--panel);
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.modal-head {
+  border-bottom-color: var(--line);
+  color: var(--ink-2);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-color: transparent;
+}
+
+.editor ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
