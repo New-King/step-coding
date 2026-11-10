@@ -859,30 +859,27 @@ button {
 }
 
 /* ---- 关系图：靠换行，不靠横向滚动 ---- */
-/* ---- 步骤浮层：贴在代码区右侧，滑出、随步骤变化、结束收起 ---- */
+/* ---- 步骤浮层：从右侧滑出，新的一步从下往上顶 ---- */
 .code-card {
   position: relative;
 }
 
 .step-toast {
   position: absolute;
-  top: 46px;
+  top: 44px;
   right: 14px;
-  max-width: 240px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 13px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
+  gap: 12px;
+  padding: 13px 22px 13px 14px;
+  border-radius: 12px;
+  background: #fff;
   color: var(--ink);
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  transform: translateX(calc(100% + 24px));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.18);
+  transform: translateX(calc(100% + 26px));
   opacity: 0;
   pointer-events: none;
-  transition: transform 0.34s var(--ease), opacity 0.34s var(--ease);
+  transition: transform 0.42s var(--ease), opacity 0.42s var(--ease);
 }
 
 .step-toast.in {
@@ -890,19 +887,62 @@ button {
   opacity: 1;
 }
 
-.st-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.st-bar {
+  width: 3px;
+  height: 22px;
+  border-radius: 2px;
   background: var(--accent);
-  flex: 0 0 6px;
-  animation: breathe 1.4s var(--ease) infinite;
+  flex: 0 0 3px;
+}
+
+.st-stack {
+  position: relative;
+  min-width: 132px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
 }
 
 .st-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
   white-space: nowrap;
+  animation: st-in 0.42s var(--ease) both;
+}
+
+.st-ghost {
+  position: absolute;
+  left: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+  color: var(--faint);
+  animation: st-out 0.42s var(--ease) both;
+}
+
+@keyframes st-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes st-out {
+  from {
+    transform: none;
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
 }
 
 .stage-waiting {

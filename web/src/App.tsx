@@ -103,6 +103,8 @@ export default function App() {
   const [peek, setPeek] = useState<string | null>(null);
 
   const lessonRef = useRef<Lesson | null>(null);
+  const stepLabelRef = useRef("");
+  const [ghostLabel, setGhostLabel] = useState("");
   const historyRef = useRef<{ role: string; content: string }[]>([]);
   const fixRoundRef = useRef(0);
   const loggedRef = useRef(-1);
@@ -351,6 +353,22 @@ export default function App() {
   const displayLabel = finished ? "讲完了" : stepLabel;
   const focus =
     lesson && !finished && stepIndex >= 0 ? lesson.steps[stepIndex]?.focus ?? -1 : -1;
+  useEffect(() => {
+    if (!running) {
+      stepLabelRef.current = "";
+      setGhostLabel("");
+      return;
+    }
+    const next = displayLabel;
+    if (stepLabelRef.current && stepLabelRef.current !== next) {
+      setGhostLabel(stepLabelRef.current);
+      stepLabelRef.current = next;
+      const timer = window.setTimeout(() => setGhostLabel(""), 420);
+      return () => window.clearTimeout(timer);
+    }
+    stepLabelRef.current = next;
+  }, [displayLabel, running]);
+
   const lastFlowIndex = messages.reduce(
     (acc, m, i) => (m.role === "flow" ? i : acc),
     -1
@@ -568,8 +586,17 @@ export default function App() {
             </div>
 
             <div className={`step-toast ${running ? "in" : ""}`}>
-              <span className="st-dot" />
-              <span className="st-text">{running ? displayLabel : "讲完了"}</span>
+              <span className="st-bar" />
+              <div className="st-stack">
+                {ghostLabel && (
+                  <span className="st-ghost" key={`ghost-${ghostLabel}`}>
+                    {ghostLabel}
+                  </span>
+                )}
+                <span className="st-text" key={`now-${displayLabel}`}>
+                  {displayLabel}
+                </span>
+              </div>
             </div>
           </div>
         </section>
