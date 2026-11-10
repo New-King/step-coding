@@ -55,9 +55,16 @@ button {
 
 .ask {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-hero {
+  flex: 1;
+  min-height: 0;
   display: grid;
   place-items: center;
-  padding: 40px;
+  padding: 48px 24px 24px;
 }
 
 .ask-inner {
@@ -652,15 +659,28 @@ button {
 
 /* ---- 历史记录 ---- */
 .ask-history {
-  margin-top: 34px;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 16px 24px 26px;
+  border-top: 1px solid var(--line);
   text-align: left;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .history-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px 8px;
+  padding: 0 6px 6px;
   font-size: 10.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -683,8 +703,10 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
   padding: 9px 10px;
   border-radius: 8px;
+  text-align: left;
   cursor: pointer;
   transition: background 0.15s var(--ease);
 }

@@ -255,62 +255,81 @@ export default function App() {
   if (!lesson) {
     return (
       <div className="ask">
-        <div className="ask-inner">
-          <div className="ask-mark" />
-          <h1>想弄懂什么？</h1>
-          <p>说一句。它用最小的例子边写边讲——概念、流程、或者一个界面都行。</p>
+        <div className="ask-hero">
+          <div className="ask-inner">
+            <div className="ask-mark" />
+            <h1>想弄懂什么？</h1>
+            <p>说一句。它用最小的例子边写边讲——概念、流程、或者一个界面都行。</p>
 
-          <textarea
-            className="ask-input"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void ask(question);
-            }}
-            placeholder="比如：useEffect 什么时候执行，或者写个登录页"
-            rows={2}
-            autoFocus
-          />
+            <textarea
+              className="ask-input"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void ask(question);
+              }}
+              placeholder="比如：useEffect 什么时候执行，或者写个登录页"
+              rows={2}
+              autoFocus
+            />
 
-          <button className="ask-btn" onClick={() => void ask(question)} disabled={loading || !question.trim()}>
-            {loading ? "正在想例子…" : "讲给我看"}
-          </button>
+            <button
+              className="ask-btn"
+              onClick={() => void ask(question)}
+              disabled={loading || !question.trim()}
+            >
+              {loading ? "正在想例子…" : "讲给我看"}
+            </button>
 
-          <div className="ask-examples">
-            {EXAMPLES.map((item) => (
-              <button key={item} className="ask-chip" onClick={() => { setQuestion(item); void ask(item); }}>
-                {item}
-              </button>
-            ))}
-          </div>
-
-          {history.length > 0 && (
-            <div className="ask-history">
-              <div className="history-title">
-                最近讲过
+            <div className="ask-examples">
+              {EXAMPLES.map((item) => (
                 <button
-                  className="history-clear"
+                  key={item}
+                  className="ask-chip"
                   onClick={() => {
-                    localStorage.removeItem(HISTORY_KEY);
-                    setHistory([]);
+                    setQuestion(item);
+                    void ask(item);
                   }}
                 >
-                  清空
+                  {item}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {error && <div className="ask-error">{error}</div>}
+          </div>
+        </div>
+
+        {history.length > 0 && (
+          <section className="ask-history">
+            <div className="history-title">
+              <span>最近讲过</span>
+              <button
+                className="history-clear"
+                onClick={() => {
+                  localStorage.removeItem(HISTORY_KEY);
+                  setHistory([]);
+                }}
+              >
+                清空
+              </button>
+            </div>
+            <div className="history-list">
               {history.map((item) => (
-                <div key={item.title + (item.question ?? "")} className="history-item" onClick={() => open(item)}>
+                <button
+                  key={item.title + (item.question ?? "")}
+                  className="history-item"
+                  onClick={() => open(item)}
+                >
                   <span className="hi-title">{item.title}</span>
                   <span className="hi-meta">
                     {item.files.length} 个文件 · {item.lines} 行
                   </span>
-                </div>
+                </button>
               ))}
             </div>
-          )}
-
-          {error && <div className="ask-error">{error}</div>}
-        </div>
+          </section>
+        )}
       </div>
     );
   }
