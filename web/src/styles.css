@@ -1547,3 +1547,56 @@ body {
   color: #b3261e;
   line-height: 1.6;
 }
+
+/* ---- 修复滚动链：grid 行必须可收缩，否则内部 overflow 不生效 ---- */
+.body {
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.body > * {
+  min-height: 0;
+}
+
+.tree {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.code {
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
+}
+
+.tree-scroll {
+  overscroll-behavior: contain;
+}
+
+/* ---- 目录折叠 ---- */
+.file.ws {
+  gap: 4px;
+}
+
+.file.ws.dir {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.file.ws.dir:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.twist {
+  width: 12px;
+  flex: 0 0 12px;
+  display: inline-block;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-faint);
+  transition: transform 0.18s var(--ease);
+}
+
+.file.open .twist {
+  transform: rotate(90deg);
+}

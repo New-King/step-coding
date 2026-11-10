@@ -41,6 +41,39 @@ type Written = {
   written?: boolean;
 };
 
+type TreeNode = {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+  size?: number;
+  children: TreeNode[];
+};
+
+/** 扁平路径列表 → 目录树。默认全折叠，点目录才展开。 */
+function buildTree(files: WsFile[]): TreeNode[] {
+  const roots: TreeNode[] = [];
+  const byPath = new Map<string, TreeNode>();
+
+  for (const f of files) {
+    const node: TreeNode = { name: f.name, path: f.path, type: f.type, size: f.size, children: [] };
+    byPath.set(f.path, node);
+
+    const slash = f.path.lastIndexOf("/");
+    const parent = slash > 0 ? byPath.get(f.path.slice(0, slash)) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+
+  const sort = (list: TreeNode[]) => {
+    list.sort((a, b) =>
+      a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1
+    );
+    list.forEach((item) => sort(item.children));
+  };
+  sort(roots);
+  return roots;
+}
+
 function langOf(path: string) {
   if (path.endsWith(".css")) return "css";
   if (path.endsWith(".js")) return "javascript";
@@ -110,6 +143,7 @@ export default function App() {
     }
   });
   const [picking, setPicking] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [viewFile, setViewFile] = useState<{ path: string; content: string } | null>(null);
 
   const codeRef = useRef<HTMLDivElement | null>(null);
@@ -268,6 +302,17 @@ export default function App() {
       setThinking(false);
     }
   }
+
+  const tree = useMemo(() => buildTree(ws?.files ?? []), [ws]);
+
+  const toggleDir = (path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
 
   const active = snap.active;
   const text = active ? snap.buffers[active] ?? "" : "";
@@ -468,31 +513,46 @@ export default function App() {
           </div>
 
           <div className="tree-scroll">
-              {ws.files.map((f) => (
-                <div
-                  key={`${f.type}-${f.path}`}
-                  className={`file ws ${f.type} ${viewFile?.path === f.path ? "active" : ""}`}
-                  style={{ paddingLeft: 8 + f.depth * 12 }}
-                  onClick={() => {
-                    if (f.type === "file") void selectFile(f.path);
-                  }}
-                >
-                  <span className="fname">{f.name}</span>
-                  {f.type === "file" && (
-                    <button
-                      className="file-del"
-                      title="删除"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void deleteFile(f.path);
+            {(() => {
+              const rows: JSX.Element[] = [];
+              const walk = (nodes: TreeNode[], depth: number) => {
+                for (const node of nodes) {
+                  const open = expanded.has(node.path);
+                  rows.push(
+                    <div
+                      key={node.path}
+                      className={`file ws ${node.type} ${node.type === "dir" ? "dir" : ""} ${
+                        viewFile?.path === node.path ? "active" : ""
+                      } ${open ? "open" : ""}`}
+                      style={{ paddingLeft: 6 + depth * 12 }}
+                      onClick={() => {
+                        if (node.type === "dir") toggleDir(node.path);
+                        else void selectFile(node.path);
                       }}
                     >
-                      ×
-                    </button>
-                  )}
-                </div>
-              ))}
-              {ws.truncated && <div className="tree-empty">文件太多，已截断</div>}
+                      {node.type === "dir" && <span className="twist">›</span>}
+                      <span className="fname">{node.name}</span>
+                      {node.type === "file" && (
+                        <button
+                          className="file-del"
+                          title="删除"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteFile(node.path);
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  );
+                  if (node.type === "dir" && open) walk(node.children, depth + 1);
+                }
+              };
+              walk(tree, 0);
+              return rows;
+            })()}
+            {ws.truncated && <div className="tree-empty">文件太多，已截断</div>}
           </div>
         </aside>
 
