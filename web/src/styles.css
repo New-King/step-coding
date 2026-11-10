@@ -804,3 +804,105 @@ button {
   color: var(--faint);
   cursor: default;
 }
+
+/* ---- 首页：一旦开始说话，就变成对话流 ---- */
+.ask-hero.talking {
+  align-items: stretch;
+  padding: 40px 24px 0;
+}
+
+.ask-hero.talking .ask-inner {
+  display: flex;
+  flex-direction: column;
+  max-width: 620px;
+  min-height: 0;
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 16px;
+}
+
+.bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  text-align: left;
+  white-space: pre-wrap;
+  animation: rise 0.28s var(--ease) both;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 5px;
+}
+
+.bubble.typing {
+  color: var(--faint);
+}
+
+/* ---- 讲解页底部对话条 ---- */
+.talk {
+  flex: 0 0 auto;
+  padding: 0 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.talk-reply {
+  max-width: 720px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  animation: rise 0.28s var(--ease) both;
+}
+
+.talk-error {
+  font-size: 12px;
+  color: #b3261e;
+  padding-left: 4px;
+}
+
+.composer.busy {
+  opacity: 0.75;
+}
+
+/* 对话初期内容少时，让消息贴着输入框往上长 */
+.ask-hero.talking {
+  align-items: end;
+  padding-bottom: 0;
+}
+
+.ask-hero.talking .ask-inner {
+  justify-content: flex-end;
+  padding-bottom: 26px;
+}
+
+.ask-hero.talking .chat-log {
+  flex: 0 1 auto;
+  max-height: 58vh;
+  padding-top: 0;
+}

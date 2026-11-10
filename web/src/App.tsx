@@ -29,6 +29,8 @@ type Lesson = {
   question?: string;
 };
 
+type Msg = { role: "user" | "assistant"; text: string };
+
 const EMPTY: Snapshot = {
   buffers: {},
   active: null,
@@ -76,6 +78,8 @@ export default function App() {
   if (!playerRef.current) playerRef.current = new Player();
 
   const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [reply, setReply] = useState<string | null>(null);
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [history, setHistory] = useState<Lesson[]>(() => {
     try {
@@ -102,7 +106,7 @@ export default function App() {
     p.onExhausted = () => {};
 
     const initial = new URLSearchParams(window.location.search).get("q");
-    if (initial) window.setTimeout(() => void ask(initial), 80);
+    if (initial) window.setTimeout(() => void send(initial), 80);
 
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,34 +153,56 @@ export default function App() {
     });
   };
 
-  const open = (data: Lesson) => {
-    setLesson(data);
-    play(data);
-  };
-
-  const ask = async (text: string) => {
+  /** 一轮对话：先说，还是直接写。 */
+  const send = async (text: string) => {
     const value = text.trim();
     if (!value || loading) return;
-    setLoading(true);
+
+    const next: Msg[] = [...messages, { role: "user", text: value }];
+    setMessages(next);
+    setQuestion("");
+    setReply(null);
     setError(null);
-    playerRef.current!.stop();
+    setLoading(true);
+
+    // 正在播的话先停住，他要说话了
+    if (lesson) {
+      playerRef.current!.paused = true;
+      setPaused(true);
+    }
+
     try {
-      const data: Lesson = await postJson("/api/explain", { question: value });
-      const withQuestion = { ...data, question: value };
-      setLesson(withQuestion);
-      play(withQuestion);
-      remember(withQuestion);
+      const res = await postJson("/api/turn", {
+        messages: next.map((m) => ({ role: m.role, content: m.text })),
+        current: lesson,
+      });
+
+      if (res.action === "reply") {
+        setMessages([...next, { role: "assistant", text: res.text }]);
+        setReply(res.text);
+      } else {
+        const data: Lesson = { ...res.lesson, question: value };
+        setLesson(data);
+        play(data);
+        remember(data);
+      }
     } catch (e) {
-      setError(String(e).replace(/^Error:\s*/, ""));
+      const msg = String(e).replace(/^Error:\s*/, "");
+      setError(msg);
+      setMessages([...next, { role: "assistant", text: msg }]);
     } finally {
       setLoading(false);
     }
   };
 
-  const backToAsk = () => {
+  const reset = () => {
     playerRef.current!.stop();
     setLesson(null);
     setSnap(EMPTY);
+    setMessages([]);
+    setReply(null);
+    setError(null);
+    setPaused(false);
   };
 
   const replay = () => lesson && play(lesson);
@@ -234,77 +260,92 @@ export default function App() {
 
   const exportZip = () => {
     if (!lesson) return;
-
-    // 先冻住，避免把正在敲的半行导出去
     const p = playerRef.current!;
     if (!p.paused) {
       p.paused = true;
       setPaused(true);
     }
-
     const entries = lesson.files
       .map((f) => ({ path: f.path, content: snap.buffers[f.path] ?? "" }))
       .filter((e) => e.content.trim().length > 0);
-
     const safe = (lesson.title || "step-coding").replace(/[/\\:*?"<>|]/g, "-");
     downloadZip(`${safe}.zip`, entries);
   };
 
-  /* ---------------------------------------------------------------- 提问页 */
+  const composer = (
+    <div className={`composer ${loading ? "busy" : ""}`}>
+      <textarea
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void send(question);
+          }
+        }}
+        placeholder={lesson ? "说哪里不对，或者问这是什么意思" : "比如：useEffect 什么时候执行，或者写个登录页"}
+        rows={1}
+        autoFocus
+      />
+      <button
+        className="composer-send"
+        onClick={() => void send(question)}
+        disabled={loading || !question.trim()}
+        title="发送"
+      >
+        {loading ? "…" : "→"}
+      </button>
+    </div>
+  );
+
+  /* ---------------------------------------------------------------- 首页 */
 
   if (!lesson) {
+    const talking = messages.length > 0;
     return (
       <div className="ask">
-        <div className="ask-hero">
+        <div className={`ask-hero ${talking ? "talking" : ""}`}>
           <div className="ask-inner">
-            <div className="ask-mark" />
-            <h1>想弄懂什么？</h1>
-            <p>说一句，它写个最小的例子给你看。</p>
+            {!talking && (
+              <>
+                <div className="ask-mark" />
+                <h1>想弄懂什么？</h1>
+                <p>说一句，它写个最小的例子给你看。</p>
+              </>
+            )}
 
-            <div className="ask-examples">
-              {EXAMPLES.map((item) => (
-                <button
-                  key={item}
-                  className="ask-chip"
-                  onClick={() => {
-                    setQuestion(item);
-                    void ask(item);
-                  }}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+            {talking && (
+              <div className="chat-log">
+                {messages.map((m, i) => (
+                  <div key={i} className={`bubble ${m.role}`}>
+                    {m.text}
+                  </div>
+                ))}
+                {loading && <div className="bubble assistant typing">…</div>}
+              </div>
+            )}
 
-            <div className="composer">
-              <textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                    e.preventDefault();
-                    void ask(question);
-                  }
-                }}
-                placeholder="比如：useEffect 什么时候执行，或者写个登录页"
-                rows={1}
-                autoFocus
-              />
-              <button
-                className="composer-send"
-                onClick={() => void ask(question)}
-                disabled={loading || !question.trim()}
-                title="发送"
-              >
-                {loading ? "…" : "→"}
-              </button>
-            </div>
+            {!talking && (
+              <div className="ask-examples">
+                {EXAMPLES.map((item) => (
+                  <button
+                    key={item}
+                    className="ask-chip"
+                    onClick={() => void send(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            )}
 
-            {error && <div className="ask-error">{error}</div>}
+            {composer}
+
+            {error && !talking && <div className="ask-error">{error}</div>}
           </div>
         </div>
 
-        {history.length > 0 && (
+        {!talking && history.length > 0 && (
           <section className="ask-history">
             <div className="history-title">
               <span>最近</span>
@@ -323,7 +364,11 @@ export default function App() {
                 <button
                   key={item.title + (item.question ?? "")}
                   className="history-item"
-                  onClick={() => open(item)}
+                  onClick={() => {
+                    setMessages([{ role: "user", text: item.question ?? item.title }]);
+                    setLesson(item);
+                    play(item);
+                  }}
                 >
                   <span className="hi-title">{item.title}</span>
                   <span className="hi-meta">
@@ -371,7 +416,7 @@ export default function App() {
         <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
           导出代码
         </button>
-        <button className="ghost" onClick={backToAsk}>换个问题</button>
+        <button className="ghost" onClick={reset}>换个问题</button>
       </header>
 
       <main className="workspace">
@@ -436,6 +481,12 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      <footer className="talk">
+        {reply && <div className="talk-reply">{reply}</div>}
+        {error && <div className="talk-error">{error}</div>}
+        {composer}
+      </footer>
     </div>
   );
 }

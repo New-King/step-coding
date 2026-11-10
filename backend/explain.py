@@ -16,7 +16,7 @@ import os
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,12 +53,20 @@ def has_key() -> bool:
     return bool(API_KEY)
 
 
-SYSTEM = """你是一个很会讲代码的老师。用户想弄懂一件事——可能是一个概念、
-一个环节，也可能是"帮我写个页面看看长什么样"。你用最小的例子讲给他看。
+SYSTEM = """你是一个很会讲代码的人。用户想弄懂一件事——可能是一个概念、
+一个环节，也可能是"帮我写个页面看看长什么样"。你用最小的例子写给他看。
 
-只输出一个 JSON 对象，不要任何解释：
+只输出一个 JSON 对象，不要任何解释。
+
+如果用户只是在打招呼、问你能做什么、或者还没想清楚要什么，
+不要写代码，只回一句话：
+
+{"action": "reply", "text": "一句话，自然点"}
+
+真要写的时候：
 
 {
+  "action": "build",
   "title": "这件事叫什么，14 字以内",
   "summary": "一句话说清，40 字以内",
   "kind": "concept | flow | ui",
@@ -87,7 +95,16 @@ SYSTEM = """你是一个很会讲代码的老师。用户想弄懂一件事—�
      就给 2～4 个节点，并在 steps 里用 focus 指向当前节点。
    - 如果只是"写一个页面长什么样"，flow 给空数组 []。
 7. kind 说明：concept=讲概念，flow=讲流程/环节，ui=写界面。
-8. 语言跟随用户问题里提到的技术栈；没提就按最合适的来（界面用 html/css/js）。"""
+8. 语言跟随用户问题里提到的技术栈；没提就按最合适的来（界面用 html/css/js）。
+
+什么时候 reply 而不是 build：
+- 打招呼、寒暄、问你是谁 / 能干什么
+- 用户在追问上一段内容是什么意思（能直接用话讲清就别重写代码）
+- 说的太模糊，你需要先问一句
+- 已经有内容时，用户问的是"这里为什么这样"这类问题
+
+reply 的语气：像同事说话，短。不要"您好！我是您的编程助手，很高兴为您服务"，
+也不要每句都先夸一下用户的问题。一次只问一个问题，别连环追问。"""
 
 
 def _chat(messages: list[dict[str, str]]) -> str:
@@ -185,6 +202,47 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         "lines": total,
         "tooLong": total > MAX_LINES,
     }
+
+
+def render_context(lesson: dict[str, Any]) -> str:
+    """把当前内容压成一段给模型看的上下文。"""
+    lines = [f"标题：{lesson.get('title')}", f"说明：{lesson.get('summary')}"]
+    for f in lesson.get("files", []):
+        lines.append(f"\n--- {f['path']} ---")
+        code = "".join(s["code"] for s in lesson.get("steps", []) if s.get("file") == f["path"])
+        lines.append(code.rstrip())
+    return "\n".join(lines)
+
+
+def converse(messages: list[dict[str, str]], current: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """一轮对话：要么只说话，要么给一份（新的/改过的）内容。"""
+    msgs: list[dict[str, str]] = [{"role": "system", "content": SYSTEM}]
+    if current:
+        msgs.append(
+            {
+                "role": "system",
+                "content": (
+                    "现在屏幕上已经有这份内容，用户是在它的基础上说话。\n"
+                    "如果他要改，就给一份完整的新版本（保留没问题的部分，把改的地方改掉）。\n\n"
+                    + render_context(current)
+                ),
+            }
+        )
+    msgs.extend(messages)
+
+    text = _chat(msgs)
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ExplainError("模型返回的不是合法 JSON，重试一次") from exc
+
+    if str(raw.get("action", "build")) == "reply":
+        said = str(raw.get("text") or "").strip()
+        if not said:
+            raise ExplainError("模型没说话")
+        return {"action": "reply", "text": said[:200]}
+
+    return {"action": "build", "lesson": _normalize(raw)}
 
 
 def generate(question: str) -> dict[str, Any]:

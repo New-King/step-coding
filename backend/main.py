@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -26,6 +26,11 @@ class AskIn(BaseModel):
     question: str
 
 
+class TurnIn(BaseModel):
+    messages: list[dict[str, str]]
+    current: Optional[dict[str, Any]] = None
+
+
 @app.post("/api/explain")
 def post_explain(body: AskIn) -> dict[str, Any]:
     question = body.question.strip()
@@ -33,6 +38,17 @@ def post_explain(body: AskIn) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="说说你不懂哪个环节")
     try:
         return explain.generate(question)
+    except explain.ExplainError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/turn")
+def post_turn(body: TurnIn) -> dict[str, Any]:
+    """一轮对话：回一句话，或者给一份新内容。"""
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="没有消息")
+    try:
+        return explain.converse(body.messages, body.current)
     except explain.ExplainError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
