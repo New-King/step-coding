@@ -259,7 +259,7 @@ export default function App() {
           <div className="ask-inner">
             <div className="ask-mark" />
             <h1>想弄懂什么？</h1>
-            <p>说一句。它用最小的例子边写边讲——概念、流程、或者一个界面都行。</p>
+            <p>说一句，它写个最小的例子给你看。</p>
 
             <div className="ask-examples">
               {EXAMPLES.map((item) => (
@@ -304,10 +304,10 @@ export default function App() {
           </div>
         </div>
 
-        <section className="ask-history">
-          <div className="history-title">
-            <span>最近</span>
-            {history.length > 0 && (
+        {history.length > 0 && (
+          <section className="ask-history">
+            <div className="history-title">
+              <span>最近</span>
               <button
                 className="history-clear"
                 onClick={() => {
@@ -317,11 +317,7 @@ export default function App() {
               >
                 清空
               </button>
-            )}
-          </div>
-          {history.length === 0 ? (
-            <div className="history-empty">还没有。上面问一句，记录会留在这里。</div>
-          ) : (
+            </div>
             <div className="history-list">
               {history.map((item) => (
                 <button
@@ -336,8 +332,8 @@ export default function App() {
                 </button>
               ))}
             </div>
-          )}
-        </section>
+          </section>
+        )}
       </div>
     );
   }
