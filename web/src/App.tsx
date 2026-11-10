@@ -33,33 +33,74 @@ type Ws = {
   truncated: boolean;
 };
 
-type Written = {
-  path: string;
-  say: string;
-  sections: { note: string; code: string }[];
-  content: string;
-  written?: boolean;
+type AgentEvent = {
+  type: string;
+  path?: string;
+  from?: string;
+  to?: string;
+  target?: string;
+  cmd?: string;
+  output?: string;
+  exit?: number;
+  ok?: boolean;
+  error?: string;
+  text?: string;
+  created?: boolean;
+  sections?: { note: string; code: string }[];
 };
 
-type DirEntry = { path: string; name: string; type: "dir" | "file"; size?: number };
+/** 工具调用 → 播放步骤。这里决定"看得见什么"。 */
+function eventsToSteps(events: AgentEvent[]): { steps: Step[]; logs: string[] } {
+  const steps: Step[] = [];
+  const logs: string[] = [];
+
+  for (const e of events) {
+    if (e.type === "look") {
+      steps.push({ type: "banner", text: `查看 ${e.target || "."}`, delay: 200 });
+    } else if (e.type === "mkdir") {
+      if (e.ok) {
+        steps.push({ type: "banner", text: `创建目录 ${e.path}`, delay: 380 });
+        logs.push(`新建目录 ${e.path}`);
+      } else {
+        logs.push(`建目录失败：${e.error}`);
+      }
+    } else if (e.type === "write") {
+      steps.push({
+        type: "create",
+        path: e.path || "",
+        banner: `${e.created ? "创建" : "更新"} ${e.path}`,
+        delay: 340,
+      });
+      for (const sec of e.sections ?? []) {
+        steps.push({ type: "banner", text: sec.note, delay: 280 });
+        steps.push({ type: "append", path: e.path || "", text: sec.code, banner: sec.note });
+      }
+      logs.push(`${e.created ? "新建" : "更新"} ${e.path}`);
+    } else if (e.type === "delete") {
+      steps.push({ type: "banner", text: `删除 ${e.path}`, delay: 380 });
+      logs.push(e.ok ? `删除 ${e.path}` : `删除失败：${e.error}`);
+    } else if (e.type === "move") {
+      steps.push({ type: "banner", text: `移动 ${e.from} → ${e.to}`, delay: 380 });
+      logs.push(e.ok ? `移动 ${e.from} → ${e.to}` : `移动失败：${e.error}`);
+    } else if (e.type === "run") {
+      steps.push({ type: "run", cmd: e.cmd || "", banner: "运行命令" });
+      const out = (e.output || "").trim();
+      logs.push(
+        `$ ${e.cmd}\n${out ? out.slice(-900) : `（退出码 ${e.exit ?? 0}）`}`
+      );
+    } else if (e.type === "finish") {
+      steps.push({ type: "done", text: e.text || "完成" });
+    }
+  }
+
+  return { steps, logs };
+}
 
 function langOf(path: string) {
   if (path.endsWith(".css")) return "css";
   if (path.endsWith(".js")) return "javascript";
   if (path.endsWith(".html")) return "xml";
   return "javascript";
-}
-
-/** 一个文件 → 播放步骤：每写完一段，横幅换一次。 */
-function stepsForFile(w: Written): Step[] {
-  const out: Step[] = [
-    { type: "create", path: w.path, banner: `正在创建 ${w.path}`, delay: 420 },
-  ];
-  for (const sec of w.sections) {
-    out.push({ type: "banner", text: sec.note, delay: 320 });
-    out.push({ type: "append", path: w.path, text: sec.code, banner: sec.note });
-  }
-  return out;
 }
 
 function previewHtml(files: Record<string, string>) {
@@ -121,9 +162,9 @@ export default function App() {
 
   const codeRef = useRef<HTMLDivElement | null>(null);
   const taskRef = useRef("");
-  const planRef = useRef<string[]>([]);
-  const queueRef = useRef<string[]>([]);
-  const phaseRef = useRef<"idle" | "planning" | "writing" | "done">("idle");
+  const msgsRef = useRef<unknown[]>([]);
+  const roundRef = useRef(0);
+  const doneRef = useRef(false);
   const autoRan = useRef(false);
 
   useEffect(() => {
@@ -135,9 +176,8 @@ export default function App() {
     };
     p.onFinish = () => setBusy(false);
     p.onExhausted = () => {
-      if (phaseRef.current !== "writing") return;
-      if (queueRef.current.length > 0) void writeNext(queueRef.current.shift()!);
-      else finishUp();
+      if (doneRef.current) return;
+      void nextRound();
     };
     void restoreWorkspace();
 
@@ -190,41 +230,62 @@ export default function App() {
     }
   }
 
-  async function writeNext(path: string) {
+  async function refreshTree() {
+    dirsLoaded.current = new Set();
+    setDirs({});
+    await loadDir("");
+    for (const dir of expanded) {
+      dirsLoaded.current.delete(dir);
+      await loadDir(dir);
+    }
+  }
+
+  async function nextRound() {
     const p = playerRef.current!;
     setThinking(true);
     try {
-      const data: Written = await postJson("/api/write", {
-        task: taskRef.current,
-        path,
-        plan: planRef.current,
-        files: p.files(),
+      const res = await postJson("/api/agent/step", {
+        messages: msgsRef.current,
+        round: roundRef.current,
       });
-      setMessages((m) => [...m, { role: "agent", text: data.say || `正在写 ${path}` }]);
-      if (data.written) {
-        fetch("/api/workspace")
-          .then((r) => r.json())
-          .then((next: Ws) => setWs(next))
-          .catch(() => {});
+      msgsRef.current = res.messages;
+      roundRef.current += 1;
+
+      if (res.say) setMessages((m) => [...m, { role: "agent", text: res.say }]);
+
+      const { steps, logs } = eventsToSteps(res.events as AgentEvent[]);
+      if (logs.length) {
+        setMessages((m) => [...m, ...logs.map((text) => ({ role: "agent" as const, text }))]);
       }
-      p.push(stepsForFile(data));
+      if (res.done) doneRef.current = true;
+
+      void refreshTree();
+
+      if (steps.length === 0) {
+        makeSteplessProgress(res.done);
+        return;
+      }
+      p.push(steps);
     } catch (e) {
       const text = String(e).replace(/^Error:\s*/, "");
       setError(text);
       setMessages((m) => [...m, { role: "agent", text: `出错了：${text}` }]);
-      phaseRef.current = "done";
-      p.push([{ type: "done", text: "中断" }]);
+      doneRef.current = true;
+      setBusy(false);
+      playerRef.current!.push([{ type: "done", text: "中断" }]);
     } finally {
       setThinking(false);
     }
   }
 
-  function finishUp() {
-    phaseRef.current = "done";
-    playerRef.current!.push([
-      { type: "run", cmd: "open index.html", banner: "正在打开预览" },
-      { type: "done", text: "写完了，可以玩了。" },
-    ]);
+  /** 一轮里没有任何可见动作（比如只调了 finish），直接推进或收尾。 */
+  function makeSteplessProgress(done: boolean) {
+    if (done) {
+      setBusy(false);
+      playerRef.current!.push([{ type: "done", text: "完成" }]);
+      return;
+    }
+    window.setTimeout(() => void nextRound(), 0);
   }
 
   async function start(task: string) {
@@ -237,39 +298,28 @@ export default function App() {
     setShowPreview(false);
     setActiveTab(null);
     p.resetForTask();
-    phaseRef.current = "planning";
+    doneRef.current = false;
+    roundRef.current = 0;
 
     setThinking(true);
     try {
-      const data = await postJson("/api/plan-files", { task });
-
-      // 不是活儿：只回一句，别开工
-      if (data.intent === "chat") {
-        setMessages((m) => [...m, { role: "agent", text: data.reply }]);
+      const intent = await postJson("/api/intent", { task });
+      if (intent.intent === "chat") {
+        setMessages((m) => [...m, { role: "agent", text: intent.reply }]);
         setBusy(false);
-        phaseRef.current = "idle";
         return;
       }
 
-      planRef.current = data.files as string[];
-      queueRef.current = [...planRef.current];
-      setMessages((m) => [
-        ...m,
-        { role: "agent", text: `我先写这几个文件：${planRef.current.join("、")}` },
-      ]);
-      phaseRef.current = "writing";
-      const first = queueRef.current.shift();
-      if (!first) {
-        finishUp();
-        return;
-      }
-      await writeNext(first);
+      const sess = await postJson("/api/session", { task });
+      msgsRef.current = sess.messages;
+      setThinking(false);
+      await nextRound();
     } catch (e) {
       const text = String(e).replace(/^Error:\s*/, "");
       setError(text);
       setMessages((m) => [...m, { role: "agent", text: `出错了：${text}` }]);
       setBusy(false);
-      phaseRef.current = "done";
+      doneRef.current = true;
       p.push([{ type: "done", text: "中断" }]);
     } finally {
       setThinking(false);

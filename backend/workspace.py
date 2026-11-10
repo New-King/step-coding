@@ -158,6 +158,24 @@ class Workspace:
         truncated = len(entries) > MAX_ENTRIES
         return {"path": rel, "entries": entries[:MAX_ENTRIES], "truncated": truncated}
 
+    def mkdir(self, rel: str) -> dict[str, Any]:
+        path = self.resolve(rel)
+        if path.exists():
+            raise WorkspaceError(f"已存在：{rel}")
+        path.mkdir(parents=True)
+        return {"path": rel, "created": True}
+
+    def move(self, src: str, dst: str) -> dict[str, Any]:
+        origin = self.resolve(src)
+        target = self.resolve(dst)
+        if not origin.exists():
+            raise WorkspaceError(f"不存在：{src}")
+        if target.exists():
+            raise WorkspaceError(f"目标已存在：{dst}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        origin.rename(target)
+        return {"from": src, "to": dst, "moved": True}
+
     def read(self, rel: str) -> dict[str, Any]:
         path = self.resolve(rel)
         if not path.exists() or not path.is_file():

@@ -1,21 +1,22 @@
-"""真 agent：先定文件清单，再逐个把文件写出来。
+"""Agent：真的 function calling，不是文本协议。
 
-为什么分两步：
-  - 让模型自己决定"下一个写哪个文件"，它会往一个文件里塞所有东西，
-    写完还会不停"优化"，永远不结束。
-  - 先让它列出文件清单，之后每次只负责"把指定的这个文件写完整"，
-    结构就定了，而且一定收敛。
+每一轮：把消息 + 工具清单发给模型 → 模型返回 tool_calls → 我们执行 → 回填结果。
+循环到模型调用 finish 或者到步数上限。
+
+这样加一个工具只需要在 tools.py 里写一次 schema，prompt、解析、执行都不用再各写一遍。
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from . import tools as toolbox
+from .workspace import workspace as ws
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -36,32 +37,51 @@ _load_env()
 
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
+MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
-MAX_TOKENS = 8000
-MAX_FILES = 6
-
-
-def has_key() -> bool:
-    return bool(API_KEY)
+MAX_ROUNDS = 12
 
 
 class AgentError(RuntimeError):
     pass
 
 
-# ---------------------------------------------------------------- 调用
+def has_key() -> bool:
+    return bool(API_KEY)
 
-def _chat(messages: list[dict[str, str]], max_tokens: int = MAX_TOKENS) -> str:
+
+SYSTEM = """你是一个写代码的助手。用户给你一个任务，你在当前项目里把它做出来。
+
+工作方式（像人一样，一步一步来）：
+1. 先看现场：用 list_dir 看目录，用 read_file 读关键文件。不要凭空假设项目里有什么。
+2. 再动手：一次写一个文件，用 write_file，内容必须是完整的、能直接运行的。
+3. 写完验证：用 run_command 跑构建/测试/启动，看输出。
+4. 报错就修：读报错 → 改文件 → 再跑。直到通过。
+5. 完成后调用 finish，附一句总结。
+
+规矩：
+- 只在项目目录内操作，不要碰外面的路径。
+- 不要写 TODO、省略号、"此处省略"，每个文件都要完整。
+- write_file 的 sections 是可选的：把文件切成语义小段（每段 5～25 行）并各配一句
+  不超过 12 字的说明，用户就能看清你在写什么。给了 sections 的话，按顺序拼起来
+  必须正好等于 content。
+- 用户能实时看到你的每一步，所以说明要短、要具体（"随机放置食物"而不是"写逻辑"）。"""
+
+
+def _chat(messages: list[dict[str, Any]], tools: list[dict] | None = None) -> dict:
     if not API_KEY:
         raise AgentError("未配置 DEEPSEEK_API_KEY")
 
-    body = {
+    body: dict[str, Any] = {
         "model": MODEL,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": max_tokens,
+        "max_tokens": 8000,
     }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
+
     req = urllib.request.Request(
         f"{BASE_URL}/chat/completions",
         data=json.dumps(body).encode("utf-8"),
@@ -69,7 +89,7 @@ def _chat(messages: list[dict[str, str]], max_tokens: int = MAX_TOKENS) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise AgentError(f"HTTP {exc.code}") from exc
@@ -77,194 +97,141 @@ def _chat(messages: list[dict[str, str]], max_tokens: int = MAX_TOKENS) -> str:
         raise AgentError(f"网络错误: {exc}") from exc
 
     choice = data["choices"][0]
-    text = (choice.get("message", {}).get("content") or "").strip()
-    if not text:
+    msg = choice.get("message") or {}
+    if not msg.get("content") and not msg.get("tool_calls"):
         usage = data.get("usage", {})
         reason = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
-        raise AgentError(f"模型没有输出内容（finish={choice.get('finish_reason')}，推理 {reason} tokens）")
-    return text
+        raise AgentError(f"模型没有输出（finish={choice.get('finish_reason')}，推理 {reason} tokens）")
+    return msg
 
 
-# ---------------------------------------------------------------- 第一步：定文件
+def _event(name: str, args: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """把一次工具调用翻译成前端能播的事件。"""
+    ok = result.get("ok", True) and not result.get("error")
 
-DECIDE_SYSTEM = """你先判断用户这句话是在**让你写代码/做东西**，还是在打招呼、闲聊、提问。
+    if name == "write_file":
+        sections = args.get("sections") or []
+        if not sections:
+            body = result.get("content", args.get("content", ""))
+            sections = [{"note": f"写入 {args.get('path', '')}", "code": body}]
+        return {
+            "type": "write",
+            "path": args.get("path", ""),
+            "sections": sections,
+            "created": result.get("created", False),
+            "ok": ok,
+        }
+    if name == "mkdir":
+        return {"type": "mkdir", "path": args.get("path", ""), "ok": ok, "error": result.get("error")}
+    if name == "delete":
+        return {"type": "delete", "path": args.get("path", ""), "ok": ok, "error": result.get("error")}
+    if name == "move":
+        return {
+            "type": "move",
+            "from": args.get("from", ""),
+            "to": args.get("to", ""),
+            "ok": ok,
+            "error": result.get("error"),
+        }
+    if name == "run_command":
+        return {
+            "type": "run",
+            "cmd": args.get("command", ""),
+            "output": (result.get("stdout") or "") + (result.get("stderr") or ""),
+            "exit": result.get("exit", 0),
+            "ok": ok,
+            "error": result.get("error"),
+        }
+    if name == "finish":
+        return {"type": "finish", "text": args.get("summary", "")}
+    if name in ("read_file", "list_dir"):
+        return {"type": "look", "tool": name, "target": args.get("path", "") or "."}
+    return {"type": "note", "text": name}
 
-严格按下面的格式输出，不要解释：
 
-INTENT: chat
-REPLY: 一句自然的回复，30 字以内
+def start(task: str) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": f"任务：{task}"},
+    ]
 
-或者
 
-INTENT: build
-REPLY:
-FILES:
-index.html
-style.css
-game.js
+def step(messages: list[dict[str, Any]], round_no: int = 0) -> dict[str, Any]:
+    """跑一轮。返回新的消息、要播的事件、是否结束。"""
+    if round_no >= MAX_ROUNDS:
+        return {"messages": messages, "events": [{"type": "finish", "text": "步数到上限，先停在这里。"}], "done": True, "say": ""}
 
-判断规则：
-- 明确要做某个东西（"做一个贪吃蛇""写个待办清单""帮我做个落地页"）→ build
-- 打招呼、寒暄、问你是谁/能干什么、问与做东西无关的问题 → chat
-- 只给了模糊方向（"做个网站"）→ build，按最合理的理解列文件
-- build 时，FILES 里最多 5 个文件，按创建顺序排列"""
+    msg = _chat(messages, tools=toolbox.TOOLS)
+    calls = msg.get("tool_calls") or []
+
+    messages.append(
+        {
+            "role": "assistant",
+            "content": msg.get("content") or "",
+            "tool_calls": calls,
+        }
+    )
+
+    events: list[dict[str, Any]] = []
+    done = False
+
+    for call in calls:
+        name = call["function"]["name"]
+        try:
+            args = json.loads(call["function"].get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+
+        result = toolbox.execute(name, args, ws)
+        events.append(_event(name, args, result))
+
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": json.dumps(result, ensure_ascii=False)[:6000],
+            }
+        )
+
+        if name == "finish":
+            done = True
+
+    return {
+        "messages": messages,
+        "events": events,
+        "done": done,
+        "say": (msg.get("content") or "").strip(),
+    }
+
+
+DECIDE_SYSTEM = """判断用户这句话是在让你写代码/改项目，还是在打招呼、闲聊、提问。
+
+严格输出两行：
+INTENT: chat 或 build
+REPLY: 一句自然的中文回复，30 字以内（build 时留空）
+
+规则：
+- 明确要做某个东西、改某个文件 → build
+- 打招呼、寒暄、问你是谁 → chat
+- 只给模糊方向（"做个网页"）→ build"""
 
 
 def decide(task: str) -> dict[str, Any]:
-    """先分意图，再决定要不要列文件。打招呼不该开工。"""
-    text = _chat(
+    msg = _chat(
         [
             {"role": "system", "content": DECIDE_SYSTEM},
             {"role": "user", "content": task},
-        ],
-        max_tokens=300,
-    )
-
-    intent = "build"
-    reply = ""
-    files: list[str] = []
-
-    for line in text.splitlines():
-        line = line.strip()
-        upper = line.upper()
-        if upper.startswith("INTENT:"):
-            value = line.split(":", 1)[1].strip().lower()
-            if "chat" in value:
-                intent = "chat"
-        elif upper.startswith("REPLY:"):
-            reply = line.split(":", 1)[1].strip().strip('"')
-        elif re.match(r"^[\w\-./]+\.[A-Za-z0-9]{1,6}$", line):
-            if line not in files and len(files) < MAX_FILES:
-                files.append(line)
-
-    if intent == "chat":
-        return {"intent": "chat", "reply": reply or "你好，想让我做个什么？", "files": []}
-
-    if not files:
-        # 说要做但没给文件，退回固定三件套，别让用户卡住
-        files = ["index.html", "style.css", "script.js"]
-
-    return {"intent": "build", "reply": "", "files": files}
-
-
-
-def plan_files(task: str) -> list[str]:
-    text = _chat(
-        [
-            {"role": "system", "content": PLAN_SYSTEM},
-            {"role": "user", "content": f"任务：{task}"},
-        ],
-        max_tokens=200,
-    )
-
-    files: list[str] = []
-    for line in text.splitlines():
-        name = re.sub(r"^[\s\-*\d.、)）]+", "", line).strip().strip("`'\"")
-        if not name or " " in name or len(name) > 40:
-            continue
-        if not re.match(r"^[\w\-./]+\.[A-Za-z0-9]{1,6}$", name):
-            continue
-        if name not in files:
-            files.append(name)
-        if len(files) >= MAX_FILES:
-            break
-
-    if not files:
-        raise AgentError(f"没能解析出文件清单：{text[:80]}")
-    return files
-
-
-# ---------------------------------------------------------------- 第二步：写一个文件
-
-WRITE_SYSTEM = """你是一个写代码的助手。用户会告诉你项目要做什么、已经有了哪些文件，
-以及这次要写的**一个**文件。你只写这个文件。
-
-严格按下面的纯文本格式回答，不要用 JSON，不要加代码块围栏，不要额外解释：
-
-SAY: 这个文件在做什么，20 字以内
-SECTION: 这一小段在写什么，12 字以内
-<<<
-这一段的代码
->>>
-
-SECTION: 下一段在写什么
-<<<
-这一段的代码
->>>
-
-规则：
-1. 只输出这一个文件的内容，不要写别的文件。
-2. 代码切成有意义的小段，一段大约 5～25 行：
-   比如 页面结构 / 样式重置 / 画布绘制 / 撞墙判定 / 吃到食物加分 / 死亡处理。
-   不要整份文件只给一段。
-3. 所有 SECTION 的代码按顺序拼起来必须正好是完整文件，能直接运行；
-   不允许 TODO、省略号、"此处省略"。
-4. 代码原样写，不需要转义：双引号、反斜杠、模板字符串直接写。
-   唯一例外：代码里不要出现单独一行的 >>>。
-5. 如果这个文件要引用别的文件（比如 html 里 link css），按文件清单里的路径写。"""
-
-
-def _project_context(task: str, files: dict[str, str], plan: list[str]) -> str:
-    parts = [f"任务：{task}", ""]
-    parts.append("这次要写的文件：" + files.get("__current__", ""))
-    parts.append("")
-    parts.append("整个项目的文件清单：")
-    for path in plan:
-        parts.append(f"- {path}")
-    parts.append("")
-
-    existing = {k: v for k, v in files.items() if not k.startswith("__")}
-    if existing:
-        parts.append("已经写好的文件（供你参考它们的接口和类名）：")
-        for path, content in existing.items():
-            parts.append(f"--- {path} ---")
-            parts.append(content[:4000])
-        parts.append("")
-    else:
-        parts.append("这是第一个文件。")
-        parts.append("")
-    return "\n".join(parts)
-
-
-HEADER_RE = re.compile(r"^(SAY|TYPE|PATH|CMD)\s*[:：]\s*(.*)$", re.M)
-SECTION_RE = re.compile(r"SECTION\s*[:：]\s*(.*?)\s*\n<<<\n(.*?)\n>>>", re.S)
-
-
-def parse_reply(raw: str) -> dict[str, Any]:
-    text = raw.replace("\r\n", "\n")
-    header: dict[str, str] = {}
-    for key, value in HEADER_RE.findall(text):
-        header.setdefault(key, value.strip())
-
-    sections = [
-        {"note": (note.strip() or "写代码")[:24], "code": code if code.endswith("\n") else code + "\n"}
-        for note, code in SECTION_RE.findall(text)
-    ]
-
-    return {"say": header.get("SAY", "").strip(), "sections": sections}
-
-
-def write_file(task: str, path: str, files: dict[str, str], plan: list[str]) -> dict[str, Any]:
-    context = _project_context(task, {**files, "__current__": path}, plan)
-    raw = _chat(
-        [
-            {"role": "system", "content": WRITE_SYSTEM},
-            {"role": "user", "content": context},
         ]
     )
-
-    parsed = parse_reply(raw)
-    sections = parsed["sections"]
-    if not sections:
-        raise AgentError(f"《{path}》没有解析出任何 SECTION")
-
-    content = "".join(part["code"] for part in sections)
-    if not content.endswith("\n"):
-        content += "\n"
-
-    return {
-        "path": path,
-        "say": parsed["say"] or f"写 {path}",
-        "sections": sections,
-        "content": content,
-    }
+    text = msg.get("content") or ""
+    intent = "build"
+    reply = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.upper().startswith("INTENT:") and "chat" in line.lower():
+            intent = "chat"
+        elif line.upper().startswith("REPLY:"):
+            reply = line.split(":", 1)[1].strip().strip('"')
+    if intent == "chat" and not reply:
+        reply = "你好，想让我做什么？"
+    return {"intent": intent, "reply": reply}
