@@ -1,10 +1,9 @@
 export type Step =
-  | { type: "say"; text: string; delay?: number }
-  | { type: "create"; path: string; banner: string; delay?: number }
-  | { type: "open"; path: string; banner: string; delay?: number }
-  | { type: "append"; path: string; text: string; banner: string }
+  | { type: "create"; path: string; code: string; banner: string; delay?: number }
+  | { type: "append"; path: string; code: string; banner: string }
+  | { type: "edit"; path: string; find: string; replace: string; banner: string }
+  | { type: "delete"; path: string; banner: string; delay?: number }
   | { type: "banner"; text: string; delay?: number }
-  | { type: "run"; cmd: string; banner: string; delay?: number }
   | { type: "done"; text: string; delay?: number };
 
 export type Plan = {
@@ -12,7 +11,7 @@ export type Plan = {
   steps: Step[];
   files: Record<string, string>;
   stats: { files: number; steps: number; lines: number };
-  /** 已有的缓冲区：增量改写时，没动的文件保留原内容 */
+  /** 已有的缓冲区：增量修改时，没动的文件保留原内容 */
   initial?: Record<string, string>;
 };
 
@@ -28,10 +27,14 @@ export type Snapshot = {
 };
 
 /**
- * 播放器：把"写文件"这件事按人的速度演出来。
+ * 播放器：把"改文件"这件事按人的速度演出来。
  *
- * 它不产生代码，只负责**节奏**——代码本身来自 steps 里的真实内容，
- * 所以演完的缓冲区一定等于最终文件。
+ * 它不产生代码，只负责节奏。三种动作对应真人的三种操作：
+ *   create  新建文件，从头打
+ *   append  在文件末尾接着写
+ *   edit    找到那一段，删掉，把新的打进去（这才是改代码的样子）
+ *
+ * 演完的缓冲区一定等于最终文件。
  */
 export class Player {
   private steps: Step[] = [];
@@ -39,6 +42,7 @@ export class Player {
   private buffers: Record<string, string> = {};
   private pending = "";
   private pendingPath = "";
+  private pendingAt = 0;
   private carry = 0;
   private last = 0;
   private waitUntil = 0;
@@ -59,15 +63,12 @@ export class Player {
   private waiting = false;
   private running = false;
 
-  /** 边播边追加：真 agent 是一步一步给动作的。 */
   push(steps: Step[]) {
     this.steps.push(...steps);
     this.waiting = false;
-    // 有内容才开始跑；空转只会白烧时间
     if (!this.running) this.start();
   }
 
-  /** 队列清空但还没结束 —— 前端据此去问下一步。 */
   private checkExhausted() {
     if (this.waiting || this.finished) return;
     if (this.cursor >= this.steps.length) {
@@ -89,10 +90,12 @@ export class Player {
     }
     this.pending = "";
     this.pendingPath = "";
+    this.pendingAt = 0;
     this.carry = 0;
     this.waitUntil = 0;
     this.finished = false;
     this.paused = false;
+    this.waiting = false;
     this.banner = "准备开始";
     this.say = "";
     this.active =
@@ -116,92 +119,60 @@ export class Player {
     this.timer = null;
   }
 
-  reset() {
+  /** 立刻把剩下的步骤全部应用完（打断时用，保证文件是完整的）。 */
+  finishNow() {
     this.stop();
-    this.cursor = 0;
-    this.pending = "";
-    this.carry = 0;
-    this.waitUntil = 0;
-    this.finished = false;
-    this.paused = false;
-    for (const path of Object.keys(this.buffers)) this.buffers[path] = "";
-    this.banner = "准备开始";
-    this.say = "";
-    this.emit();
-    this.start();
-  }
-
-  /** 新任务：清空并重新开始。 */
-  resetForTask() {
-    this.stop();
-    this.steps = [];
-    this.cursor = 0;
-    this.buffers = {};
-    this.pending = "";
-    this.pendingPath = "";
-    this.carry = 0;
-    this.waitUntil = 0;
-    this.finished = false;
-    this.paused = false;
-    this.waiting = false;
-    this.banner = "准备开始";
-    this.say = "";
-    this.active = null;
-    this.emit();
-  }
-
-  /** 直接跳到第 n 步（用于截图、深链、或"跳过前面"）。 */
-  seekTo(target: number) {
-    this.stop();
-    for (const path of Object.keys(this.buffers)) this.buffers[path] = "";
-    this.cursor = 0;
-    this.pending = "";
-    this.pendingPath = "";
-    this.carry = 0;
-    this.waitUntil = 0;
-    this.finished = false;
-
-    while (this.cursor < Math.min(target, this.steps.length)) {
+    while (this.cursor < this.steps.length) {
       const step = this.steps[this.cursor];
       this.cursor += 1;
       switch (step.type) {
-        case "say":
-          this.say = step.text;
-          break;
         case "create":
-          this.buffers[step.path] = "";
-          this.active = step.path;
-          this.banner = step.banner;
-          break;
-        case "open":
+          this.buffers[step.path] = step.code;
           this.active = step.path;
           this.banner = step.banner;
           break;
         case "append":
+          this.buffers[step.path] = (this.buffers[step.path] ?? "") + step.code;
           this.active = step.path;
           this.banner = step.banner;
-          this.buffers[step.path] = (this.buffers[step.path] ?? "") + step.text;
           break;
-        case "banner":
-          this.banner = step.text;
-          break;
-        case "run":
+        case "edit": {
+          const body = this.buffers[step.path] ?? "";
+          const idx = body.indexOf(step.find);
+          this.buffers[step.path] =
+            idx < 0
+              ? body + step.replace
+              : body.slice(0, idx) + step.replace + body.slice(idx + step.find.length);
+          this.active = step.path;
           this.banner = step.banner;
-          this.say = `$ ${step.cmd}`;
+          break;
+        }
+        case "delete":
+          delete this.buffers[step.path];
           break;
         case "done":
           this.banner = "完成";
           this.say = step.text;
           break;
+        default:
+          break;
       }
     }
-
-    if (this.cursor >= this.steps.length) {
-      this.finished = true;
-      this.banner = "完成";
-    }
+    this.pending = "";
+    this.pendingPath = "";
+    this.finished = true;
     this.emit();
-    this.last = performance.now();
+  }
+
+  reset() {
+    this.stop();
+    this.cursor = 0;
+    this.pending = "";
+    this.pendingAt = 0;
+    this.carry = 0;
+    this.waitUntil = 0;
+    this.finished = false;
+    this.paused = false;
     this.start();
   }
 
@@ -221,7 +192,6 @@ export class Player {
     }
 
     if (this.pending) {
-      // 变速：长行略快，遇到换行停一下，像人在收行
       const speed = this.cps * (1 + Math.sin(now / 900) * 0.08);
       this.carry += (speed * dt) / 1000;
       const take = Math.floor(this.carry);
@@ -229,7 +199,12 @@ export class Player {
         this.carry -= take;
         const chunk = this.pending.slice(0, take);
         this.pending = this.pending.slice(take);
-        this.buffers[this.pendingPath] = (this.buffers[this.pendingPath] ?? "") + chunk;
+
+        const body = this.buffers[this.pendingPath] ?? "";
+        const at = Math.min(this.pendingAt, body.length);
+        this.buffers[this.pendingPath] = body.slice(0, at) + chunk + body.slice(at);
+        this.pendingAt = at + chunk.length;
+
         if (chunk.endsWith("\n")) this.waitUntil = now + 90;
       }
       if (!this.pending) this.pendingPath = "";
@@ -251,41 +226,62 @@ export class Player {
     this.cursor += 1;
 
     switch (step.type) {
-      case "say":
-        this.say = step.text;
-        this.waitUntil = now + (step.delay ?? 900);
-        break;
-      case "create":
-        this.buffers[step.path] = "";
-        this.active = step.path;
-        this.banner = step.banner;
-        this.waitUntil = now + (step.delay ?? 500);
-        break;
-      case "open":
-        this.active = step.path;
-        this.banner = step.banner;
-        this.waitUntil = now + (step.delay ?? 400);
-        break;
-      case "append":
-        this.active = step.path;
-        this.banner = step.banner;
-        this.pending = step.text;
-        this.pendingPath = step.path;
-        break;
       case "banner":
         this.banner = step.text;
         this.waitUntil = now + (step.delay ?? 340);
         break;
-      case "run":
+
+      case "create":
+        this.buffers[step.path] = "";
+        this.active = step.path;
         this.banner = step.banner;
-        this.say = `$ ${step.cmd}`;
-        this.waitUntil = now + (step.delay ?? 800);
+        this.pending = step.code;
+        this.pendingPath = step.path;
+        this.pendingAt = 0;
+        this.waitUntil = now + (step.delay ?? 160);
         break;
+
+      case "append": {
+        this.active = step.path;
+        this.banner = step.banner;
+        const body = this.buffers[step.path] ?? "";
+        this.pending = step.code;
+        this.pendingPath = step.path;
+        this.pendingAt = body.length;
+        break;
+      }
+
+      case "edit": {
+        this.active = step.path;
+        this.banner = step.banner;
+        const body = this.buffers[step.path] ?? "";
+        const idx = body.indexOf(step.find);
+        if (idx < 0) {
+          // 找不到就接着末尾写，不吞内容
+          this.pending = step.replace;
+          this.pendingPath = step.path;
+          this.pendingAt = body.length;
+        } else {
+          this.buffers[step.path] = body.slice(0, idx) + body.slice(idx + step.find.length);
+          this.pending = step.replace;
+          this.pendingPath = step.path;
+          this.pendingAt = idx;
+        }
+        break;
+      }
+
+      case "delete":
+        delete this.buffers[step.path];
+        this.active = Object.keys(this.buffers)[0] ?? null;
+        this.banner = step.banner;
+        this.waitUntil = now + (step.delay ?? 320);
+        break;
+
       case "done":
         this.banner = "完成";
         this.say = step.text;
         this.finished = true;
-        this.waitUntil = now + (step.delay ?? 500);
+        this.waitUntil = now + (step.delay ?? 400);
         this.emit();
         this.onFinish();
         break;

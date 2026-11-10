@@ -28,7 +28,7 @@ class AskIn(BaseModel):
 
 class TurnIn(BaseModel):
     messages: list[dict[str, str]]
-    current: Optional[dict[str, Any]] = None
+    files: Optional[dict[str, str]] = None
 
 
 @app.post("/api/explain")
@@ -48,7 +48,7 @@ def post_turn(body: TurnIn) -> dict[str, Any]:
     if not body.messages:
         raise HTTPException(status_code=400, detail="没有消息")
     try:
-        return explain.converse(body.messages, body.current)
+        return explain.converse(body.messages, body.files)
     except explain.ExplainError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

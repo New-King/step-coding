@@ -15,17 +15,21 @@ hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("python", python);
 hljs.registerLanguage("go", go);
 
-type LessonNode = { label: string; desc: string };
+type FlowNode = { label: string; desc: string };
 type LessonFile = { path: string; lang: string };
-type LessonStep = { label: string; file: string; focus: number; code: string };
+
+type Op =
+  | { kind: "create" | "append"; path: string; label: string; code: string; focus: number }
+  | { kind: "edit"; path: string; label: string; find: string; replace: string; focus: number }
+  | { kind: "delete"; path: string; label: string; focus: number };
+
 type Lesson = {
   title: string;
   summary: string;
   kind: string;
   files: LessonFile[];
-  touched?: string[];
-  flow: LessonNode[];
-  steps: LessonStep[];
+  flow: FlowNode[];
+  ops: Op[];
   lines: number;
   tooLong: boolean;
   question?: string;
@@ -33,7 +37,9 @@ type Lesson = {
 
 type Msg =
   | { role: "user" | "assistant" | "log"; text: string }
-  | { role: "flow"; nodes: LessonNode[] };
+  | { role: "flow"; nodes: FlowNode[] };
+
+type HistoryItem = { lesson: Lesson; base: Record<string, string> };
 
 const EMPTY: Snapshot = {
   buffers: {},
@@ -77,6 +83,25 @@ async function postJson(url: string, body: unknown) {
   return res.json();
 }
 
+/** 一批操作 → 播放步骤。这才是屏幕上真正发生的事。 */
+function opsToSteps(ops: Op[]): Step[] {
+  const steps: Step[] = [];
+  ops.forEach((op, i) => {
+    const banner = `${i}|${op.label}`;
+    if (op.kind === "create") {
+      steps.push({ type: "create", path: op.path, code: op.code, banner, delay: 140 });
+    } else if (op.kind === "append") {
+      steps.push({ type: "append", path: op.path, code: op.code, banner });
+    } else if (op.kind === "edit") {
+      steps.push({ type: "edit", path: op.path, find: op.find, replace: op.replace, banner });
+    } else {
+      steps.push({ type: "delete", path: op.path, banner, delay: 260 });
+    }
+  });
+  steps.push({ type: "done", text: "完成" });
+  return steps;
+}
+
 export default function App() {
   const playerRef = useRef<Player | null>(null);
   if (!playerRef.current) playerRef.current = new Player();
@@ -85,9 +110,10 @@ export default function App() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [started, setStarted] = useState(false);
-  const [history, setHistory] = useState<Lesson[]>(() => {
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+      return Array.isArray(raw) ? raw.filter((x) => x?.lesson?.ops) : [];
     } catch {
       return [];
     }
@@ -104,24 +130,24 @@ export default function App() {
   const [peek, setPeek] = useState<string | null>(null);
 
   const lessonRef = useRef<Lesson | null>(null);
-  const stepLabelRef = useRef("");
-  const playingRef = useRef(false);
-  const forceFullRef = useRef(false);
-  const [ghostLabel, setGhostLabel] = useState("");
   const historyRef = useRef<{ role: string; content: string }[]>([]);
-  const fixRoundRef = useRef(0);
+  const stepLabelRef = useRef("");
   const loggedRef = useRef(-1);
   const finishedRef = useRef(false);
+  const fixRoundRef = useRef(0);
+  const baseRef = useRef<Record<string, string>>({});
+  const playingRef = useRef(false);
+  const [ghostLabel, setGhostLabel] = useState("");
 
   useEffect(() => {
     const p = playerRef.current!;
     p.cps = cps;
-    p.onUpdate = (snap) => {
-      setSnap(snap);
-      playingRef.current = snap.total > 0 && !snap.finished;
-      logProgress(snap.banner);
+    p.onUpdate = (s) => {
+      setSnap(s);
+      playingRef.current = s.total > 0 && !s.finished;
+      logProgress(s.banner);
     };
-    p.onFinish = () => finishLesson();
+    p.onFinish = () => void finishLesson();
     p.onExhausted = () => {};
 
     const initial = new URLSearchParams(window.location.search).get("q");
@@ -131,7 +157,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 每走到一步，就在右边记一行——右边是过程，不是结论。 */
+  const remember = (data: Lesson) => {
+    const item: HistoryItem = { lesson: data, base: baseRef.current };
+    setHistory((prev) => {
+      const next = [item, ...prev.filter((x) => x.lesson.title !== data.title)].slice(0, 6);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下就算了 */
+      }
+      return next;
+    });
+  };
+
+  /** 一次操作的完整过程：从当前缓冲区出发，只应用这批 op。 */
+  const play = (data: Lesson, base?: Record<string, string>) => {
+    const p = playerRef.current!;
+    const prev = base ?? p.files();
+    baseRef.current = prev;
+
+    const files: Record<string, string> = {};
+    data.files.forEach((f) => {
+      files[f.path] = prev[f.path] ?? "";
+    });
+    for (const op of data.ops) {
+      if (!(op.path in files)) files[op.path] = prev[op.path] ?? "";
+    }
+
+    const steps = opsToSteps(data.ops);
+
+    lessonRef.current = data;
+    setLesson(data);
+    loggedRef.current = -1;
+    finishedRef.current = false;
+    setPeek(null);
+    p.cps = cps;
+    p.paused = false;
+    setPaused(false);
+    p.load({
+      task: data.title,
+      steps,
+      files,
+      initial: { ...files },
+      stats: { files: data.files.length, steps: steps.length, lines: data.lines },
+    });
+  };
+
   const logProgress = (banner: string) => {
     const data = lessonRef.current;
     if (!data) return;
@@ -142,14 +213,14 @@ export default function App() {
 
     const fresh: Msg[] = [];
     for (let i = loggedRef.current + 1; i <= idx; i += 1) {
-      const step = data.steps[i];
-      if (step) fresh.push({ role: "log", text: `${step.file}　${step.label}` });
+      const op = data.ops[i];
+      if (op) fresh.push({ role: "log", text: `${op.path}　${op.label}` });
     }
     loggedRef.current = idx;
     if (fresh.length) setMessages((m) => [...m, ...fresh]);
   };
 
-  /** 播完了：自己检查一遍；查出问题就回去修，修完再查。 */
+  /** 播完了：自己检查一遍；查出问题就带着清单回去改，改完再查。 */
   const finishLesson = async () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
@@ -160,6 +231,7 @@ export default function App() {
     const issues = checkFiles(files);
 
     setMessages((m) => [...m, { role: "log", text: `写完　${summarize(files)}` }]);
+    remember(data);
 
     if (issues.length === 0) {
       setMessages((m) => [
@@ -172,10 +244,7 @@ export default function App() {
     const list = issues.map((i) => `· ${i.file}：${i.text}`).join("\n");
 
     if (fixRoundRef.current >= 2) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: `还是有问题，先停在这里：\n${list}` },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", text: `还是有问题，先停在这里：\n${list}` }]);
       return;
     }
 
@@ -188,20 +257,19 @@ export default function App() {
 
     historyRef.current.push({
       role: "user",
-      content: `你刚写出来的文件有问题，请改好，重新给出完整文件：\n${list}`,
+      content: `这几个地方有问题，请用 edit 改掉：\n${list}`,
     });
 
     setLoading(true);
     try {
       const res = await postJson("/api/turn", {
         messages: historyRef.current,
-        current: data,
+        files,
       });
       if (res.action === "build") {
-        const next: Lesson = { ...res.lesson };
+        const next: Lesson = res.lesson;
         historyRef.current.push({ role: "assistant", content: `改好了：${next.title}` });
-        setLesson(next);
-        play(next);
+        play(next, files);
       } else {
         historyRef.current.push({ role: "assistant", content: res.text });
         setMessages((m) => [...m, { role: "assistant", text: res.text }]);
@@ -216,77 +284,6 @@ export default function App() {
     }
   };
 
-  const remember = (data: Lesson) => {
-    setHistory((prev) => {
-      const next = [data, ...prev.filter((x) => x.title !== data.title)].slice(0, 6);
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-      } catch {
-        /* 存不下就算了 */
-      }
-      return next;
-    });
-  };
-
-  const play = (data: Lesson) => {
-    const p = playerRef.current!;
-    const previous = p.files();
-    const prevFiles = lessonRef.current?.files ?? [];
-
-    // 模型可能漏写没动过的文件，这里取并集，别把已有的丢掉
-    const all: LessonFile[] = [...data.files];
-    for (const f of prevFiles) {
-      if (!all.some((x) => x.path === f.path)) all.push(f);
-    }
-
-    const forceAll = forceFullRef.current;
-    forceFullRef.current = false;
-    const touchedList = forceAll
-      ? all.map((f) => f.path)
-      : data.touched?.length
-        ? data.touched
-        : data.files.map((f) => f.path);
-    const touched = touchedList.filter((t) => all.some((f) => f.path === t));
-
-    // 没动的文件保留原内容，动过的清空重写
-    const files: Record<string, string> = {};
-    const initial: Record<string, string> = {};
-    all.forEach((f) => {
-      const keep = !touched.includes(f.path);
-      files[f.path] = keep ? previous[f.path] ?? "" : "";
-      initial[f.path] = files[f.path];
-    });
-
-    const first = touched[0] ?? data.files[0].path;
-    const steps: Step[] = [{ type: "create", path: first, banner: "准备", delay: 200 }];
-    data.steps.forEach((step, i) => {
-      if (!touched.includes(step.file)) return;
-      const tag = `${i}|${step.label}`;
-      steps.push({ type: "banner", text: tag, delay: 260 });
-      steps.push({ type: "append", path: step.file, text: step.code, banner: tag });
-    });
-    steps.push({ type: "done", text: "讲完了" });
-
-    loggedRef.current = -1;
-    finishedRef.current = false;
-    setPeek(null);
-    p.cps = cps;
-    p.paused = false;
-    setPaused(false);
-    const merged: Lesson = { ...data, files: all };
-    lessonRef.current = merged;
-    setLesson(merged);
-
-    p.load({
-      task: data.title,
-      steps,
-      files,
-      initial,
-      stats: { files: all.length, steps: steps.length, lines: data.lines },
-    });
-  };
-
-  /** 一轮对话：先说，还是直接写。 */
   const send = async (text: string) => {
     const value = text.trim();
     if (!value || loading) return;
@@ -298,24 +295,24 @@ export default function App() {
       fixRoundRef.current = 0;
     }
     historyRef.current.push({ role: "user", content: value });
+
     const next: Msg[] = [...messages, { role: "user", text: value }];
     setMessages(next);
     setQuestion("");
     setError(null);
     setLoading(true);
 
-    // 正在播的话先停住，他要说话了
-    if (lesson) {
+    if (revising) {
+      // 还没播完就插话：先把剩下的步骤一次性应用完，避免把半截文件当上下文
+      if (playingRef.current) playerRef.current!.finishNow();
       playerRef.current!.paused = true;
       setPaused(true);
-      // 还没写完就插话：文件内容不完整，下一版全量重写
-      if (playingRef.current) forceFullRef.current = true;
     }
 
     try {
       const res = await postJson("/api/turn", {
         messages: historyRef.current,
-        current: lesson,
+        files: revising ? playerRef.current!.files() : {},
       });
 
       if (res.action === "reply") {
@@ -323,18 +320,12 @@ export default function App() {
         setMessages([...next, { role: "assistant", text: res.text }]);
       } else {
         const data: Lesson = { ...res.lesson, question: value };
-        historyRef.current.push({ role: "assistant", content: `写好了：${data.title}` });
-        fixRoundRef.current = 0;
-        setLesson(data);
+        historyRef.current.push({ role: "assistant", content: `动手了：${data.title}` });
+        if (!revising) fixRoundRef.current = 0;
+
+        const flowMsg: Msg[] = data.flow.length >= 2 ? [{ role: "flow", nodes: data.flow }] : [];
+        setMessages([...next, ...flowMsg]);
         play(data);
-        remember(data);
-        const flowMsg: Msg[] =
-          data.flow.length >= 2 ? [{ role: "flow", nodes: data.flow }] : [];
-        setMessages([
-          ...next,
-          ...(revising ? [{ role: "log" as const, text: "按你说的重写一版" }] : []),
-          ...flowMsg,
-        ]);
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
@@ -353,9 +344,11 @@ export default function App() {
     setMessages([]);
     setError(null);
     setPaused(false);
+    historyRef.current = [];
+    lessonRef.current = null;
   };
 
-  const replay = () => lesson && play(lesson);
+  const replay = () => lesson && play(lesson, baseRef.current);
 
   const togglePause = () => {
     const p = playerRef.current!;
@@ -382,16 +375,16 @@ export default function App() {
 
   const finished = snap.finished;
   const running = Boolean(lesson) && snap.total > 0 && !finished;
-  const displayLabel = finished ? "讲完了" : stepLabel;
   const focus =
-    lesson && !finished && stepIndex >= 0 ? lesson.steps[stepIndex]?.focus ?? -1 : -1;
+    lesson && !finished && stepIndex >= 0 ? lesson.ops[stepIndex]?.focus ?? -1 : -1;
+
   useEffect(() => {
     if (!running) {
       stepLabelRef.current = "";
       setGhostLabel("");
       return;
     }
-    const next = displayLabel;
+    const next = stepLabel;
     if (stepLabelRef.current && stepLabelRef.current !== next) {
       setGhostLabel(stepLabelRef.current);
       stepLabelRef.current = next;
@@ -399,7 +392,7 @@ export default function App() {
       return () => window.clearTimeout(timer);
     }
     stepLabelRef.current = next;
-  }, [displayLabel, running]);
+  }, [stepLabel, running]);
 
   const lastFlowIndex = messages.reduce(
     (acc, m, i) => (m.role === "flow" ? i : acc),
@@ -434,8 +427,8 @@ export default function App() {
       p.paused = true;
       setPaused(true);
     }
-    const entries = lesson.files
-      .map((f) => ({ path: f.path, content: snap.buffers[f.path] ?? "" }))
+    const entries = Object.keys(snap.buffers)
+      .map((path) => ({ path, content: snap.buffers[path] ?? "" }))
       .filter((e) => e.content.trim().length > 0);
     const safe = (lesson.title || "step-coding").replace(/[/\\:*?"<>|]/g, "-");
     downloadZip(`${safe}.zip`, entries);
@@ -467,7 +460,7 @@ export default function App() {
     </div>
   );
 
-  /* ---------------------------------------------------------- 欢迎页（独立页面） */
+  /* ---------------------------------------------------------- 欢迎页 */
 
   if (!started) {
     return (
@@ -506,20 +499,21 @@ export default function App() {
             <div className="history-list">
               {history.map((item) => (
                 <button
-                  key={item.title + (item.question ?? "")}
+                  key={item.lesson.title + (item.lesson.question ?? "")}
                   className="history-item"
                   onClick={() => {
                     setStarted(true);
                     setMessages([
-                      { role: "user", text: item.question ?? item.title },
-                      { role: "assistant", text: item.summary },
+                      { role: "user", text: item.lesson.question ?? item.lesson.title },
+                      { role: "assistant", text: item.lesson.summary },
                     ]);
-                    setLesson(item);
-                    play(item);
+                    play(item.lesson, item.base);
                   }}
                 >
-                  <span className="hi-title">{item.title}</span>
-                  <span className="hi-meta">{item.files.length} 个文件 · {item.lines} 行</span>
+                  <span className="hi-title">{item.lesson.title}</span>
+                  <span className="hi-meta">
+                    {item.lesson.files.length} 个文件 · {item.lesson.lines} 行
+                  </span>
                 </button>
               ))}
             </div>
@@ -528,6 +522,8 @@ export default function App() {
       </div>
     );
   }
+
+  /* ---------------------------------------------------------- 工作区 */
 
   const branding = lesson?.title ?? "Step Coding";
   const subtitle = lesson?.summary ?? "说一句，它写个最小的例子给你看。";
@@ -574,10 +570,10 @@ export default function App() {
         <aside className="files">
           <div className="files-title">
             文件
-            <span>{lesson ? lesson.files.length : 0}</span>
+            <span>{fileList.length}</span>
           </div>
-          {lesson ? (
-            lesson.files.map((f) => (
+          {fileList.length > 0 ? (
+            fileList.map((f) => (
               <button
                 key={f.path}
                 className={`file ${activeFile === f.path ? "on" : ""}`}
@@ -631,8 +627,8 @@ export default function App() {
                     {ghostLabel}
                   </span>
                 )}
-                <span className="st-text" key={`now-${displayLabel}`}>
-                  {displayLabel}
+                <span className="st-text" key={`now-${stepLabel}`}>
+                  {stepLabel}
                 </span>
               </div>
             </div>
@@ -642,33 +638,6 @@ export default function App() {
         <aside className="chat">
           <div className="chat-head">对话</div>
           <div className="chat-log">
-            {messages.length === 0 && (
-              <div className="chat-intro">
-                {history.length > 0 && (
-                  <>
-                    <div className="chat-intro-sub recent">最近</div>
-                    {history.map((item) => (
-                      <button
-                        key={item.title + (item.question ?? "")}
-                        className="history-item"
-                        onClick={() => {
-                          setMessages([
-                            { role: "user", text: item.question ?? item.title },
-                            { role: "assistant", text: item.summary },
-                          ]);
-                          setLesson(item);
-                          play(item);
-                        }}
-                      >
-                        <span className="hi-title">{item.title}</span>
-                        <span className="hi-meta">{item.lines} 行</span>
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-
             {messages.map((m, i) =>
               m.role === "flow" ? (
                 <div className="flow-card" key={i}>
