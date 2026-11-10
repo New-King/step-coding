@@ -411,10 +411,20 @@ export default function App() {
               </div>
             </>
           ) : (
-            <div className="stage-empty">
-              <div className="stage-mark" />
-              <div className="stage-title">还没有文件</div>
-              <div className="stage-hint">在右边说一句，它写的东西会出现在这里。</div>
+            <div className="stage-welcome">
+              <div className="ask-mark" />
+              <h1>想弄懂什么？</h1>
+              <p>说一句，它写个最小的例子给你看。</p>
+
+              <div className="ask-examples">
+                {EXAMPLES.map((item) => (
+                  <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {composer}
             </div>
           )}
         </section>
@@ -424,15 +434,9 @@ export default function App() {
           <div className="chat-log">
             {messages.length === 0 && (
               <div className="chat-intro">
-                <div className="chat-intro-text">想弄懂什么？</div>
-                <div className="chat-intro-sub">概念、流程，或者一个界面，都行。</div>
-                <div className="chat-chips">
-                  {EXAMPLES.map((item) => (
-                    <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
+                {history.length === 0 && (
+                  <div className="chat-intro-sub">说一句，来往会记在这里。</div>
+                )}
                 {history.length > 0 && (
                   <>
                     <div className="chat-intro-sub recent">最近</div>
@@ -466,7 +470,7 @@ export default function App() {
             {loading && <div className="bubble assistant typing">…</div>}
             {error && <div className="bubble error">{error}</div>}
           </div>
-          <div className="chat-foot">{composer}</div>
+          {lesson && <div className="chat-foot">{composer}</div>}
         </aside>
       </main>
     </div>

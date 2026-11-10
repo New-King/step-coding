@@ -885,3 +885,60 @@ button {
   background: #fff;
   box-shadow: var(--shadow);
 }
+
+/* ---- 中间欢迎区（原首页搬进编辑区） ---- */
+.stage-welcome {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 32px 6vh;
+  text-align: center;
+}
+
+.stage-welcome .ask-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--accent);
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.stage-welcome .ask-mark::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.stage-welcome h1 {
+  margin: 0 0 7px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+}
+
+.stage-welcome p {
+  margin: 0 0 22px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stage-welcome .ask-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.stage-welcome .composer {
+  width: 100%;
+  max-width: 520px;
+}
