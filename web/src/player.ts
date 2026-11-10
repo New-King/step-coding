@@ -12,6 +12,8 @@ export type Plan = {
   steps: Step[];
   files: Record<string, string>;
   stats: { files: number; steps: number; lines: number };
+  /** 已有的缓冲区：增量改写时，没动的文件保留原内容 */
+  initial?: Record<string, string>;
 };
 
 export type Snapshot = {
@@ -82,7 +84,9 @@ export class Player {
     this.steps = plan.steps;
     this.cursor = 0;
     this.buffers = {};
-    for (const path of Object.keys(plan.files)) this.buffers[path] = "";
+    for (const path of Object.keys(plan.files)) {
+      this.buffers[path] = plan.initial?.[path] ?? "";
+    }
     this.pending = "";
     this.pendingPath = "";
     this.carry = 0;
@@ -91,7 +95,10 @@ export class Player {
     this.paused = false;
     this.banner = "准备开始";
     this.say = "";
-    this.active = Object.keys(plan.files)[0] ?? null;
+    this.active =
+      plan.steps.find((st) => st.type === "create")?.path ??
+      Object.keys(plan.files)[0] ??
+      null;
     this.emit();
     if (this.steps.length) this.start();
   }

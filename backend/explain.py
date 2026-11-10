@@ -73,6 +73,7 @@ SYSTEM = """你是一个很会讲代码的人。用户想弄懂一件事——�
   "files": [
     {"path": "app.js", "lang": "javascript"}
   ],
+  "touched": ["app.js"],
   "flow": [
     {"label": "角色名，6 字以内", "desc": "它在干什么，20 字以内"}
   ],
@@ -96,6 +97,13 @@ SYSTEM = """你是一个很会讲代码的人。用户想弄懂一件事——�
    - 如果只是"写一个页面长什么样"，flow 给空数组 []。
 7. kind 说明：concept=讲概念，flow=讲流程/环节，ui=写界面。
 8. 语言跟随用户问题里提到的技术栈；没提就按最合适的来（界面用 html/css/js）。
+
+**改已有的东西时，只写要动的那部分：**
+- files 列出这次完整的一套文件（没改的也列，方便前端显示）
+- touched 只列这次真正要写/新建的文件
+- steps 只覆盖 touched 里的文件；没改的文件不要重写、不要出现在 steps 里
+- 比如"再加一个注册页，登录页加个跳转链接"：files 三个，touched 是
+  ["index.html", "register.html"]，style.css 不需要重写
 
 什么时候 reply 而不是 build：
 - 打招呼、寒暄、问你是谁 / 能干什么
@@ -154,6 +162,15 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
 
     paths = [f["path"] for f in files]
 
+    raw_touched = raw.get("touched")
+    touched = (
+        [str(t).strip().lstrip("/") for t in raw_touched if str(t).strip().lstrip("/") in paths]
+        if isinstance(raw_touched, list) and raw_touched
+        else list(paths)
+    )
+    if not touched:
+        touched = list(paths)
+
     steps = []
     for item in (raw.get("steps") or [])[:MAX_STEPS]:
         code = item.get("code") or ""
@@ -168,6 +185,8 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
             focus = int(item.get("focus", 0))
         except (TypeError, ValueError):
             focus = 0
+        if target not in touched:
+            continue
         steps.append(
             {
                 "label": str(item.get("label") or "继续").strip()[:24],
@@ -197,6 +216,7 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         "summary": str(raw.get("summary") or "").strip()[:60],
         "kind": str(raw.get("kind") or "concept").strip()[:12],
         "files": files,
+        "touched": touched,
         "flow": flow,
         "steps": steps,
         "lines": total,

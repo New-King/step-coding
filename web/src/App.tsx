@@ -23,6 +23,7 @@ type Lesson = {
   summary: string;
   kind: string;
   files: LessonFile[];
+  touched?: string[];
   flow: LessonNode[];
   steps: LessonStep[];
   lines: number;
@@ -104,6 +105,8 @@ export default function App() {
 
   const lessonRef = useRef<Lesson | null>(null);
   const stepLabelRef = useRef("");
+  const playingRef = useRef(false);
+  const forceFullRef = useRef(false);
   const [ghostLabel, setGhostLabel] = useState("");
   const historyRef = useRef<{ role: string; content: string }[]>([]);
   const fixRoundRef = useRef(0);
@@ -115,6 +118,7 @@ export default function App() {
     p.cps = cps;
     p.onUpdate = (snap) => {
       setSnap(snap);
+      playingRef.current = snap.total > 0 && !snap.finished;
       logProgress(snap.banner);
     };
     p.onFinish = () => finishLesson();
@@ -226,33 +230,59 @@ export default function App() {
 
   const play = (data: Lesson) => {
     const p = playerRef.current!;
+    const previous = p.files();
+    const prevFiles = lessonRef.current?.files ?? [];
+
+    // 模型可能漏写没动过的文件，这里取并集，别把已有的丢掉
+    const all: LessonFile[] = [...data.files];
+    for (const f of prevFiles) {
+      if (!all.some((x) => x.path === f.path)) all.push(f);
+    }
+
+    const forceAll = forceFullRef.current;
+    forceFullRef.current = false;
+    const touchedList = forceAll
+      ? all.map((f) => f.path)
+      : data.touched?.length
+        ? data.touched
+        : data.files.map((f) => f.path);
+    const touched = touchedList.filter((t) => all.some((f) => f.path === t));
+
+    // 没动的文件保留原内容，动过的清空重写
     const files: Record<string, string> = {};
-    data.files.forEach((f) => {
-      files[f.path] = "";
+    const initial: Record<string, string> = {};
+    all.forEach((f) => {
+      const keep = !touched.includes(f.path);
+      files[f.path] = keep ? previous[f.path] ?? "" : "";
+      initial[f.path] = files[f.path];
     });
 
-    const steps: Step[] = [
-      { type: "create", path: data.files[0].path, banner: "准备", delay: 200 },
-    ];
+    const first = touched[0] ?? data.files[0].path;
+    const steps: Step[] = [{ type: "create", path: first, banner: "准备", delay: 200 }];
     data.steps.forEach((step, i) => {
+      if (!touched.includes(step.file)) return;
       const tag = `${i}|${step.label}`;
       steps.push({ type: "banner", text: tag, delay: 260 });
       steps.push({ type: "append", path: step.file, text: step.code, banner: tag });
     });
     steps.push({ type: "done", text: "讲完了" });
 
-    lessonRef.current = data;
     loggedRef.current = -1;
     finishedRef.current = false;
     setPeek(null);
     p.cps = cps;
     p.paused = false;
     setPaused(false);
+    const merged: Lesson = { ...data, files: all };
+    lessonRef.current = merged;
+    setLesson(merged);
+
     p.load({
       task: data.title,
       steps,
       files,
-      stats: { files: data.files.length, steps: steps.length, lines: data.lines },
+      initial,
+      stats: { files: all.length, steps: steps.length, lines: data.lines },
     });
   };
 
@@ -278,6 +308,8 @@ export default function App() {
     if (lesson) {
       playerRef.current!.paused = true;
       setPaused(true);
+      // 还没写完就插话：文件内容不完整，下一版全量重写
+      if (playingRef.current) forceFullRef.current = true;
     }
 
     try {
