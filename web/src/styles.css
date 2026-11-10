@@ -1119,3 +1119,200 @@ button {
   font-size: 11.5px;
   color: rgba(255, 255, 255, 0.35);
 }
+
+/* ---- 过程时间线 ---- */
+.tl {
+  font-size: 12.5px;
+  line-height: 1.65;
+  animation: rise 0.26s var(--ease) both;
+}
+
+.tl.think {
+  color: var(--muted);
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.tl.look {
+  color: var(--faint);
+  font-size: 11.5px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.tl.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.plan-step {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.plan-i {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-size: 9px;
+  display: grid;
+  place-items: center;
+  margin-top: 2px;
+}
+
+.tl.ask-done {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.ask-done-opts {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.tl.file-op {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.op-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.op-tag.new {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.op-tag.edit {
+  background: #e8eefc;
+  color: #2f5bd3;
+}
+
+.op-tag.del {
+  background: #fdecea;
+  color: #b3261e;
+}
+
+.op-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.op-label {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl.err {
+  color: #b3261e;
+  font-size: 11.5px;
+}
+
+.tl.finish {
+  margin-top: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+/* ---- 追问卡片 ---- */
+.ask-card {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--ink);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  animation: rise 0.3s var(--ease) both;
+}
+
+.ask-q {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.ask-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-opt {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fafafa;
+  font-size: 12px;
+  color: var(--ink-soft);
+  transition: all 0.16s var(--ease);
+}
+
+.ask-opt:hover {
+  background: #fff;
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.ask-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ask-input-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fafafa;
+  font-size: 12px;
+  outline: none;
+}
+
+.ask-input-row input:focus {
+  background: #fff;
+  border-color: var(--ink);
+}
+
+.ask-send {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}

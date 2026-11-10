@@ -15,31 +15,26 @@ hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("python", python);
 hljs.registerLanguage("go", go);
 
-type FlowNode = { label: string; desc: string };
-type LessonFile = { path: string; lang: string };
+type Event =
+  | { action: "think"; text: string }
+  | { action: "look"; path: string }
+  | { action: "plan"; steps: string[] }
+  | { action: "ask"; question: string; options: string[] }
+  | { action: "write"; path: string; lang: string; label: string; code: string }
+  | { action: "edit"; path: string; label: string; find: string; replace: string }
+  | { action: "delete"; path: string; label: string }
+  | { action: "error"; text: string }
+  | { action: "finish"; text: string };
 
-type Op =
-  | { kind: "create" | "append"; path: string; label: string; code: string; focus: number }
-  | { kind: "edit"; path: string; label: string; find: string; replace: string; focus: number }
-  | { kind: "delete"; path: string; label: string; focus: number };
+type Item = { id: number; kind: Event["action"]; ev: Event };
 
-type Lesson = {
+type HistoryItem = {
   title: string;
   summary: string;
-  kind: string;
-  files: LessonFile[];
-  flow: FlowNode[];
-  ops: Op[];
-  lines: number;
-  tooLong: boolean;
-  question?: string;
+  items: Item[];
+  base: Record<string, string>;
+  files: Record<string, string>;
 };
-
-type Msg =
-  | { role: "user" | "assistant" | "log"; text: string }
-  | { role: "flow"; nodes: FlowNode[] };
-
-type HistoryItem = { lesson: Lesson; base: Record<string, string> };
 
 const EMPTY: Snapshot = {
   buffers: {},
@@ -59,7 +54,8 @@ const EXAMPLES: { label: string; ask: string }[] = [
   { label: "镜像分层怎么回事", ask: "Docker 的镜像分层是怎么回事" },
 ];
 
-const HISTORY_KEY = "stepcoding.history";
+const HISTORY_KEY = "stepcoding.history.v2";
+const MAX_ROUNDS = 20;
 
 function langOf(name: string) {
   const key = name.toLowerCase();
@@ -83,43 +79,25 @@ async function postJson(url: string, body: unknown) {
   return res.json();
 }
 
-/** 一批操作 → 播放步骤。这才是屏幕上真正发生的事。 */
-function opsToSteps(ops: Op[]): Step[] {
-  const steps: Step[] = [];
-  ops.forEach((op, i) => {
-    const banner = `${i}|${op.label}`;
-    if (op.kind === "create") {
-      steps.push({ type: "create", path: op.path, code: op.code, banner, delay: 140 });
-    } else if (op.kind === "append") {
-      steps.push({ type: "append", path: op.path, code: op.code, banner });
-    } else if (op.kind === "edit") {
-      steps.push({ type: "edit", path: op.path, find: op.find, replace: op.replace, banner });
-    } else {
-      steps.push({ type: "delete", path: op.path, banner, delay: 260 });
-    }
-  });
-  steps.push({ type: "done", text: "完成" });
-  return steps;
-}
-
 export default function App() {
   const playerRef = useRef<Player | null>(null);
   if (!playerRef.current) playerRef.current = new Player();
 
   const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
   const [started, setStarted] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      return Array.isArray(raw) ? raw.filter((x) => x?.lesson?.ops) : [];
+      return Array.isArray(raw) ? raw.filter((x) => Array.isArray(x?.items)) : [];
     } catch {
       return [];
     }
   });
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
-  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [asking, setAsking] = useState<Extract<Event, { action: "ask" }> | null>(null);
+  const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [cps, setCps] = useState(() => {
@@ -127,40 +105,23 @@ export default function App() {
     return Number.isFinite(v) && v > 0 ? v : 60;
   });
   const [copied, setCopied] = useState(false);
-  const [traceOpen, setTraceOpen] = useState(
-    () => new URLSearchParams(window.location.search).get("trace") === "1"
-  );
-  const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
   const [peek, setPeek] = useState<string | null>(null);
+  const [traceOpen, setTraceOpen] = useState(false);
+  const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
 
-  const lessonRef = useRef<Lesson | null>(null);
-  const historyRef = useRef<{ role: string; content: string }[]>([]);
-  const stepLabelRef = useRef("");
-  const loggedRef = useRef(-1);
-  const finishedRef = useRef(false);
-  const fixRoundRef = useRef(0);
-  const baseRef = useRef<Record<string, string>>({});
-  const playingRef = useRef(false);
-  const [ghostLabel, setGhostLabel] = useState("");
+  const messagesRef = useRef<{ role: string; content: string }[]>([]);
+  const filesRef = useRef<Record<string, string>>({});
+  const roundRef = useRef(0);
+  const startFilesRef = useRef<Record<string, string>>({});
+  const itemsRef = useRef<Item[]>([]);
+  const idRef = useRef(0);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
-  const watchdogRef = useRef(0);
+  const runningRef = useRef(false);
+  const waitingRef = useRef(false);
+  const stepLabelRef = useRef("");
+  const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
-  /** 等太久就放开输入，别让人对着转圈发呆。 */
-  const armWatchdog = () => {
-    window.clearTimeout(watchdogRef.current);
-    watchdogRef.current = window.setTimeout(() => {
-      note("watchdog", "等待超时，已放开输入");
-      setLoading(false);
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: "这次等太久了，没等到回复。再发一次试试。" },
-      ]);
-    }, 75000);
-  };
-  const disarmWatchdog = () => window.clearTimeout(watchdogRef.current);
-
-  /** 一条 trace：既进浏览器控制台，也留在面板里。出问题先看这里。 */
   const note = (tag: string, text: string) => {
     const entry = { t: Date.now(), tag, text };
     logsRef.current = [...logsRef.current.slice(-199), entry];
@@ -168,29 +129,177 @@ export default function App() {
     console.info(`[step-coding] ${tag} · ${text}`);
   };
 
+  const push = (ev: Event) => {
+    const item: Item = { id: (idRef.current += 1), kind: ev.action, ev };
+    itemsRef.current = [...itemsRef.current, item];
+    setItems(itemsRef.current);
+  };
+
   useEffect(() => {
     const p = playerRef.current!;
     p.cps = cps;
-    p.onUpdate = (s) => {
-      setSnap(s);
-      playingRef.current = s.total > 0 && !s.finished;
-      logProgress(s.banner);
+    p.onUpdate = (s) => setSnap(s);
+    p.onFinish = () => {};
+    p.onExhausted = () => {
+      if (waitingRef.current) return;
+      void nextRound();
     };
-    p.onFinish = () => void finishLesson();
-    p.onExhausted = () => note("player", "队列空了");
-    p.onExhausted = () => {};
 
-    const initial = new URLSearchParams(window.location.search).get("q");
-    if (initial) window.setTimeout(() => void send(initial), 80);
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) window.setTimeout(() => void start(q), 80);
 
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const remember = (data: Lesson) => {
-    const item: HistoryItem = { lesson: data, base: baseRef.current };
+  /* ------------------------------------------------------------ 循环 */
+
+  const start = async (task: string) => {
+    const value = task.trim();
+    if (!value) return;
+
+    playerRef.current!.stop();
+    setStarted(true);
+    setError(null);
+    setAsking(null);
+    setItems([]);
+    itemsRef.current = [];
+    idRef.current = 0;
+    filesRef.current = {};
+    startFilesRef.current = {};
+    roundRef.current = 0;
+    waitingRef.current = false;
+    messagesRef.current = [{ role: "user", content: value }];
+    push({ action: "think", text: `开始处理：${value}` } as Event);
+
+    setRunning(true);
+    runningRef.current = true;
+    await nextRound();
+  };
+
+  const nextRound = async () => {
+    if (!runningRef.current || waitingRef.current) return;
+    if (roundRef.current >= MAX_ROUNDS) {
+      finish("步数到上限，先停在这里。");
+      return;
+    }
+
+    try {
+      const res = await postJson("/api/step", {
+        messages: messagesRef.current,
+        files: filesRef.current,
+        round: roundRef.current,
+      });
+      roundRef.current += 1;
+      messagesRef.current = res.messages;
+      if (res.files) filesRef.current = res.files;
+
+      await handle(res.event as Event);
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, "");
+      note("loop.error", msg);
+      setError(msg);
+      push({ action: "error", text: msg } as Event);
+      finish("");
+    }
+  };
+
+  const handle = async (ev: Event) => {
+    note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
+
+    if (ev.action === "think" || ev.action === "look" || ev.action === "plan") {
+      push(ev);
+      window.setTimeout(() => void nextRound(), ev.action === "plan" ? 700 : 350);
+      return;
+    }
+
+    if (ev.action === "ask") {
+      push(ev);
+      setAsking(ev);
+      waitingRef.current = true;
+      setRunning(false);
+      runningRef.current = false;
+      window.setTimeout(() => composerRef.current?.focus(), 60);
+      return;
+    }
+
+    if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
+      push(ev);
+      playEvent(ev);
+      return;
+    }
+
+    if (ev.action === "error") {
+      push(ev);
+      window.setTimeout(() => void nextRound(), 400);
+      return;
+    }
+
+    if (ev.action === "finish") {
+      push(ev);
+      finish(ev.text);
+    }
+  };
+
+  /** 把一次文件动作演出来，演完继续循环。 */
+  const playEvent = (ev: Extract<Event, { action: "write" | "edit" | "delete" }>) => {
+    const p = playerRef.current!;
+    const files: Record<string, string> = { ...filesRef.current };
+    files[ev.path] = files[ev.path] ?? "";
+
+    let step: Step;
+    if (ev.action === "write") {
+      step = { type: "create", path: ev.path, code: ev.code, banner: ev.label, delay: 160 };
+    } else if (ev.action === "edit") {
+      step = { type: "edit", path: ev.path, find: ev.find, replace: ev.replace, banner: ev.label };
+    } else {
+      step = { type: "delete", path: ev.path, banner: ev.label, delay: 320 };
+    }
+
+    setPeek(null);
+    p.paused = false;
+    setPaused(false);
+    p.load({
+      task: ev.label,
+      steps: [step],
+      files,
+      initial: { ...filesRef.current },
+      stats: { files: Object.keys(files).length, steps: 1, lines: 0 },
+    });
+  };
+
+  const finish = (text: string) => {
+    setRunning(false);
+    runningRef.current = false;
+
+    const files = filesRef.current;
+    const issues = checkFiles(files);
+    note("finish", `${Object.keys(files).length} 文件 · ${issues.length} 问题`);
+    setItems((prev) => prev);
+
+    push({
+      action: "plan",
+      steps: [summarize(files), ...(issues.length ? issues.map((i) => `${i.file}：${i.text}`) : ["检查通过，没发现问题"])],
+    } as Event);
+
+    remember(files);
+    void text;
+  };
+
+  const remember = (files: Record<string, string>) => {
+    const title =
+      itemsRef.current.find((i) => i.kind === "plan")?.ev.action === "plan"
+        ? "最近一次"
+        : "最近一次";
+    const item: HistoryItem = {
+      title,
+      summary: summarize(files),
+      items: itemsRef.current,
+      base: startFilesRef.current,
+      files,
+    };
     setHistory((prev) => {
-      const next = [item, ...prev.filter((x) => x.lesson.title !== data.title)].slice(0, 6);
+      const next = [item, ...prev].slice(0, 6);
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
       } catch {
@@ -200,201 +309,73 @@ export default function App() {
     });
   };
 
-  /** 一次操作的完整过程：从当前缓冲区出发，只应用这批 op。 */
-  const play = (data: Lesson, base?: Record<string, string>) => {
-    const p = playerRef.current!;
-    const prev = base ?? p.files();
-    baseRef.current = prev;
+  /* ------------------------------------------------------------ 交互 */
 
-    const files: Record<string, string> = {};
-    data.files.forEach((f) => {
-      files[f.path] = prev[f.path] ?? "";
-    });
-    for (const op of data.ops) {
-      if (!(op.path in files)) files[op.path] = prev[op.path] ?? "";
-    }
-
-    const steps = opsToSteps(data.ops);
-
-    lessonRef.current = data;
-    setLesson(data);
-    loggedRef.current = -1;
-    finishedRef.current = false;
-    setPeek(null);
-    p.cps = cps;
-    p.paused = false;
-    setPaused(false);
-    note("play", `${data.ops.length} 个操作 · ${data.ops.map((o) => o.kind).join("/")}`);
-    p.load({
-      task: data.title,
-      steps,
-      files,
-      initial: { ...files },
-      stats: { files: data.files.length, steps: steps.length, lines: data.lines },
-    });
-  };
-
-  const logProgress = (banner: string) => {
-    const data = lessonRef.current;
-    if (!data) return;
-    const match = /^(\d+)\|/.exec(banner || "");
-    if (!match) return;
-    const idx = Number(match[1]);
-    if (idx <= loggedRef.current) return;
-
-    const fresh: Msg[] = [];
-    for (let i = loggedRef.current + 1; i <= idx; i += 1) {
-      const op = data.ops[i];
-      if (op) fresh.push({ role: "log", text: `${op.path}　${op.label}` });
-    }
-    loggedRef.current = idx;
-    if (fresh.length) setMessages((m) => [...m, ...fresh]);
-  };
-
-  /** 播完了：自己检查一遍；查出问题就带着清单回去改，改完再查。 */
-  const finishLesson = async () => {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-
-    const data = lessonRef.current;
-    if (!data) return;
-    const files = playerRef.current!.files();
-    const issues = checkFiles(files);
-
-    note("finish", `${Object.keys(files).length} 个文件 · ${issues.length} 个问题`);
-    setMessages((m) => [...m, { role: "log", text: `写完　${summarize(files)}` }]);
-    remember(data);
-
-    if (issues.length === 0) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: "检查了一遍：引用对得上，类名也都对得上，没发现问题。" },
-      ]);
-      return;
-    }
-
-    const list = issues.map((i) => `· ${i.file}：${i.text}`).join("\n");
-
-    if (fixRoundRef.current >= 2) {
-      setMessages((m) => [...m, { role: "assistant", text: `还是有问题，先停在这里：\n${list}` }]);
-      return;
-    }
-
-    fixRoundRef.current += 1;
-    note("fix", `第 ${fixRoundRef.current} 轮 · ${issues.length} 处`);
-    setMessages((m) => [
-      ...m,
-      { role: "assistant", text: `检查查出 ${issues.length} 处问题：\n${list}` },
-      { role: "log", text: "回去改这几处" },
-    ]);
-
-    historyRef.current.push({
-      role: "user",
-      content: `这几个地方有问题，请用 edit 改掉：\n${list}`,
-    });
-
-    setLoading(true);
-    armWatchdog();
-    try {
-      const res = await postJson("/api/turn", {
-        messages: historyRef.current,
-        files,
-      });
-      if (res.action === "build") {
-        const next: Lesson = res.lesson;
-        historyRef.current.push({ role: "assistant", content: `改好了：${next.title}` });
-        play(next, files);
-      } else {
-        historyRef.current.push({ role: "assistant", content: res.text });
-        setMessages((m) => [...m, { role: "assistant", text: res.text }]);
-      }
-    } catch (e) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: `想改但没改成：${String(e).replace(/^Error:\s*/, "")}` },
-      ]);
-    } finally {
-      disarmWatchdog();
-      setLoading(false);
-    }
+  const answerAsk = async (value: string) => {
+    const text = value.trim();
+    if (!text || !asking) return;
+    push({ action: "think", text: `你选了：${text}` } as Event);
+    messagesRef.current = [
+      ...messagesRef.current,
+      { role: "user", content: text },
+    ];
+    setAsking(null);
+    setAnswer("");
+    waitingRef.current = false;
+    setRunning(true);
+    runningRef.current = true;
+    await nextRound();
   };
 
   const send = async (text: string) => {
     const value = text.trim();
     if (!value) return;
-    if (loading) {
-      note("send.blocked", "上一次还在等回复，这次忽略");
+    setQuestion("");
+
+    if (asking) {
+      await answerAsk(value);
       return;
     }
 
-    setStarted(true);
-    note("send", value.slice(0, 60));
-    const revising = lesson !== null;
-    if (!revising) {
-      historyRef.current = [];
-      fixRoundRef.current = 0;
-    }
-    historyRef.current.push({ role: "user", content: value });
-
-    const next: Msg[] = [...messages, { role: "user", text: value }];
-    setMessages(next);
-    setQuestion("");
-    setError(null);
-    setLoading(true);
-    armWatchdog();
-
-    if (revising) {
-      // 还没播完就插话：先把剩下的步骤一次性应用完，避免把半截文件当上下文
-      if (playingRef.current) playerRef.current!.finishNow();
-      playerRef.current!.paused = true;
-      setPaused(true);
+    if (runningRef.current) {
+      // 运行中插话：等这一轮结束再继续，先把话记进上下文
+      messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
+      push({ action: "think", text: `（插话）${value}` } as Event);
+      return;
     }
 
-    try {
-      const res = await postJson("/api/turn", {
-        messages: historyRef.current,
-        files: revising ? playerRef.current!.files() : {},
-      });
-
-      note("turn.ok", `action=${res.action}${res.lesson ? ` ops=${res.lesson.ops.length}` : ""}`);
-
-      if (res.action === "reply") {
-        historyRef.current.push({ role: "assistant", content: res.text });
-        setMessages([...next, { role: "assistant", text: res.text }]);
-        window.setTimeout(() => composerRef.current?.focus(), 60);
-      } else {
-        const data: Lesson = { ...res.lesson, question: value };
-        historyRef.current.push({ role: "assistant", content: `动手了：${data.title}` });
-        if (!revising) fixRoundRef.current = 0;
-
-        const flowMsg: Msg[] = data.flow.length >= 2 ? [{ role: "flow", nodes: data.flow }] : [];
-        setMessages([...next, ...flowMsg]);
-        play(data);
-      }
-    } catch (e) {
-      const msg = String(e).replace(/^Error:\s*/, "");
-      note("turn.error", msg);
-      setError(msg);
-      setMessages([...next, { role: "assistant", text: msg }]);
-    } finally {
-      disarmWatchdog();
-      setLoading(false);
+    if (!started) {
+      await start(value);
+      return;
     }
+
+    messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
+    push({ action: "think", text: `（补充）${value}` } as Event);
+    setRunning(true);
+    runningRef.current = true;
+    await nextRound();
+  };
+
+  const stopRun = () => {
+    runningRef.current = false;
+    setRunning(false);
+    note("stop", "手动停止");
   };
 
   const reset = () => {
     playerRef.current!.stop();
-    setLesson(null);
+    playerRef.current!.paused = false;
+    stopRun();
     setStarted(false);
     setSnap(EMPTY);
-    setMessages([]);
+    setItems([]);
+    itemsRef.current = [];
+    setAsking(null);
     setError(null);
-    setPaused(false);
-    historyRef.current = [];
-    lessonRef.current = null;
+    filesRef.current = {};
+    messagesRef.current = [];
+    roundRef.current = 0;
   };
-
-  const replay = () => lesson && play(lesson, baseRef.current);
 
   const togglePause = () => {
     const p = playerRef.current!;
@@ -402,30 +383,55 @@ export default function App() {
     setPaused(p.paused);
   };
 
-  const fileList = lesson?.files ?? [];
+  const replay = () => {
+    const files = startFilesRef.current;
+    const steps: Step[] = [];
+    for (const item of itemsRef.current) {
+      const ev = item.ev;
+      if (ev.action === "write" && ev.kind) continue;
+      if (ev.action === "write") {
+        steps.push({ type: "create", path: ev.path, code: ev.code, banner: ev.label, delay: 120 });
+      } else if (ev.action === "edit") {
+        steps.push({ type: "edit", path: ev.path, find: ev.find, replace: ev.replace, banner: ev.label });
+      } else if (ev.action === "delete") {
+        steps.push({ type: "delete", path: ev.path, banner: ev.label });
+      }
+    }
+    if (!steps.length) return;
+    filesRef.current = { ...files };
+    playerRef.current!.load({
+      task: "重播",
+      steps,
+      files: Object.keys(files).length ? files : { "": "" },
+      initial: files,
+      stats: { files: Object.keys(files).length, steps: steps.length, lines: 0 },
+    });
+  };
+
+  /* ------------------------------------------------------------ 展示 */
+
+  const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
   const activeFile =
     peek ??
     (snap.active && fileList.some((f) => f.path === snap.active)
       ? snap.active
-      : fileList[0]?.path ?? "");
+      : playerRef.current?.active ?? fileList[0]?.path ?? "");
 
-  const code = activeFile ? snap.buffers[activeFile] ?? "" : "";
+  const code = activeFile ? snap.buffers[activeFile] ?? filesRef.current[activeFile] ?? "" : "";
   const langName = fileList.find((f) => f.path === activeFile)?.lang ?? "javascript";
 
-  const [stepIndex, stepLabel] = useMemo(() => {
-    const raw = snap.banner || "";
-    const [i, ...rest] = raw.split("|");
-    const n = Number(i);
-    return [Number.isFinite(n) ? n : -1, rest.join("|") || "准备"] as const;
-  }, [snap.banner]);
+  const highlighted = useMemo(() => {
+    if (!code) return "";
+    try {
+      return hljs.highlight(code, { language: langName }).value;
+    } catch {
+      return code;
+    }
+  }, [code, langName]);
 
-  const finished = snap.finished;
-  const running = Boolean(lesson) && snap.total > 0 && !finished;
-  const focus =
-    lesson && !finished && stepIndex >= 0 ? lesson.ops[stepIndex]?.focus ?? -1 : -1;
-
+  const stepLabel = snap.banner || "";
   useEffect(() => {
-    if (!running) {
+    if (!snap.total || snap.finished) {
       stepLabelRef.current = "";
       setGhostLabel("");
       return;
@@ -438,21 +444,7 @@ export default function App() {
       return () => window.clearTimeout(timer);
     }
     stepLabelRef.current = next;
-  }, [stepLabel, running]);
-
-  const lastFlowIndex = messages.reduce(
-    (acc, m, i) => (m.role === "flow" ? i : acc),
-    -1
-  );
-
-  const highlighted = useMemo(() => {
-    if (!code) return "";
-    try {
-      return hljs.highlight(code, { language: langOf(langName) }).value;
-    } catch {
-      return code;
-    }
-  }, [code, langName]);
+  }, [stepLabel, snap.total, snap.finished]);
 
   const copy = async () => {
     try {
@@ -464,24 +456,17 @@ export default function App() {
     }
   };
 
-  const hasContent = Object.values(snap.buffers).some((v) => (v ?? "").trim().length > 0);
-
   const exportZip = () => {
-    if (!lesson) return;
-    const p = playerRef.current!;
-    if (!p.paused) {
-      p.paused = true;
-      setPaused(true);
-    }
-    const entries = Object.keys(snap.buffers)
-      .map((path) => ({ path, content: snap.buffers[path] ?? "" }))
+    const files = filesRef.current;
+    const entries = Object.keys(files)
+      .map((path) => ({ path, content: files[path] }))
       .filter((e) => e.content.trim().length > 0);
-    const safe = (lesson.title || "step-coding").replace(/[/\\:*?"<>|]/g, "-");
-    downloadZip(`${safe}.zip`, entries);
+    if (!entries.length) return;
+    downloadZip("step-coding.zip", entries);
   };
 
-  const composer = (
-    <div className={`composer ${loading ? "busy" : ""}`}>
+  const composer = (placeholder: string) => (
+    <div className={`composer ${running ? "busy" : ""}`}>
       <textarea
         ref={composerRef}
         value={question}
@@ -492,22 +477,22 @@ export default function App() {
             void send(question);
           }
         }}
-        placeholder={lesson ? "说哪里不对，或者问这是什么意思" : "说一句…"}
+        placeholder={placeholder}
         rows={1}
         autoFocus
       />
       <button
         className="composer-send"
         onClick={() => void send(question)}
-        disabled={loading || !question.trim()}
+        disabled={!question.trim()}
         title="发送"
       >
-        {loading ? "…" : "→"}
+        →
       </button>
     </div>
   );
 
-  /* ---------------------------------------------------------- 欢迎页 */
+  /* ------------------------------------------------------------ 欢迎页 */
 
   if (!started) {
     return (
@@ -516,104 +501,55 @@ export default function App() {
           <div className="ask-inner">
             <div className="ask-mark" />
             <h1>想弄懂什么？</h1>
-            <p>说一句，它写个最小的例子给你看。</p>
+            <p>说一句。它会先想、再看、再问、再动手——你能看清每一步。</p>
             <div className="ask-examples">
               {EXAMPLES.map((item) => (
-                <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
+                <button key={item.ask} className="ask-chip" onClick={() => void start(item.ask)}>
                   {item.label}
                 </button>
               ))}
             </div>
-            {composer}
+            {composer("说一句…")}
             {error && <div className="ask-error">{error}</div>}
           </div>
         </div>
-
-        {history.length > 0 && (
-          <section className="ask-history">
-            <div className="history-title">
-              <span>最近</span>
-              <button
-                className="history-clear"
-                onClick={() => {
-                  localStorage.removeItem(HISTORY_KEY);
-                  setHistory([]);
-                }}
-              >
-                清空
-              </button>
-            </div>
-            <div className="history-list">
-              {history.map((item) => (
-                <button
-                  key={item.lesson.title + (item.lesson.question ?? "")}
-                  className="history-item"
-                  onClick={() => {
-                    setStarted(true);
-                    setMessages([
-                      { role: "user", text: item.lesson.question ?? item.lesson.title },
-                      { role: "assistant", text: item.lesson.summary },
-                    ]);
-                    play(item.lesson, item.base);
-                  }}
-                >
-                  <span className="hi-title">{item.lesson.title}</span>
-                  <span className="hi-meta">
-                    {item.lesson.files.length} 个文件 · {item.lesson.lines} 行
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
     );
   }
 
-  /* ---------------------------------------------------------- 工作区 */
-
-  const branding = lesson?.title ?? "Step Coding";
-  const subtitle = lesson?.summary ?? "说一句，它写个最小的例子给你看。";
+  /* ------------------------------------------------------------ 工作区 */
 
   return (
     <div className="app">
       <header className="bar">
         <div className="brand">
           <span className="logo" />
-          <span className="name">{branding}</span>
+          <span className="name">{running ? "正在做" : asking ? "等你决定" : "已完成"}</span>
         </div>
-        <div className="task">{subtitle}</div>
         <div className="spacer" />
-
-        {lesson && (
-          <>
-            <label className="speed">
-              速度
-              <input
-                type="range"
-                min={20}
-                max={160}
-                value={cps}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setCps(v);
-                  playerRef.current!.cps = v;
-                }}
-              />
-              <b>{cps}</b>
-            </label>
-            <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
-            <button className="ghost" onClick={replay}>重播</button>
-            <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
-            <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
-              导出代码
-            </button>
-            <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
-              日志{logs.length > 0 ? ` ${logs.length}` : ""}
-            </button>
-            <button className="ghost" onClick={reset}>清空</button>
-          </>
-        )}
+        <label className="speed">
+          速度
+          <input
+            type="range"
+            min={20}
+            max={160}
+            value={cps}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setCps(v);
+              playerRef.current!.cps = v;
+            }}
+          />
+          <b>{cps}</b>
+        </label>
+        <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
+        <button className="ghost" onClick={replay}>重播</button>
+        <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
+        <button className="primary" onClick={exportZip}>导出代码</button>
+        <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
+          日志{logs.length > 0 ? ` ${logs.length}` : ""}
+        </button>
+        <button className="ghost" onClick={reset}>清空</button>
       </header>
 
       <main className="workspace">
@@ -622,7 +558,7 @@ export default function App() {
             文件
             <span>{fileList.length}</span>
           </div>
-          {fileList.length > 0 ? (
+          {fileList.length ? (
             fileList.map((f) => (
               <button
                 key={f.path}
@@ -636,81 +572,84 @@ export default function App() {
           ) : (
             <div className="files-none">还没有文件</div>
           )}
-          <div className="files-foot">{lesson ? `${lesson.lines} 行` : "—"}</div>
+          <div className="files-foot">{fileList.length ? `${countLines(filesRef.current)} 行` : "—"}</div>
         </aside>
 
         <section className="pane">
           <div className="code-card">
             <div className="code-head">
-              <span className="code-path">{activeFile}</span>
+              <span className="code-path">{activeFile || "等待第一步"}</span>
               <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
             </div>
             <div className="code">
-              {lesson ? (
-                code ? (
-                  <>
-                    <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
-                    <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
-                  </>
-                ) : (
-                  <div className="code-empty">准备中…</div>
-                )
+              {code ? (
+                <>
+                  <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+                </>
               ) : (
                 <div className="code-empty stage-waiting">
                   <span className="stage-dot" />
-                  <span>正在写…</span>
+                  <span>{running ? "它在想接下来做什么…" : "还没有代码"}</span>
                 </div>
               )}
             </div>
 
-            <div
-              className={`step-toast ${running ? "in" : ""} ${ghostLabel ? "changing" : ""}`}
-            >
+            <div className={`step-toast ${running && snap.total > 0 && !snap.finished ? "in" : ""} ${ghostLabel ? "changing" : ""}`}>
               <span className="st-tile">
                 <svg viewBox="0 0 24 24" aria-hidden>
                   <path d="M4 12h13M11 6l6 6-6 6" />
                 </svg>
               </span>
               <div className="st-stack">
-                {ghostLabel && (
-                  <span className="st-ghost" key={`ghost-${ghostLabel}`}>
-                    {ghostLabel}
-                  </span>
-                )}
-                <span className="st-text" key={`now-${stepLabel}`}>
-                  {stepLabel}
-                </span>
+                {ghostLabel && <span className="st-ghost" key={`g-${ghostLabel}`}>{ghostLabel}</span>}
+                <span className="st-text" key={`n-${stepLabel}`}>{stepLabel}</span>
               </div>
             </div>
           </div>
         </section>
 
         <aside className="chat">
-          <div className="chat-head">对话</div>
+          <div className="chat-head">过程</div>
           <div className="chat-log">
-            {messages.map((m, i) =>
-              m.role === "flow" ? (
-                <div className="flow-card" key={i}>
-                  {m.nodes.map((node, j) => (
-                    <div key={`${node.label}-${j}`} className="flow-step">
-                      {j > 0 && <div className="flow-link" />}
-                      <div className={`flow-node ${i === lastFlowIndex && focus === j ? "on" : ""}`}>
-                        <div className="flow-node-label">{node.label}</div>
-                        <div className="flow-node-desc">{node.desc}</div>
-                      </div>
-                    </div>
+            {items.map((item) => (
+              <TimelineItem
+                key={item.id}
+                item={item}
+                live={item.ev.action === "ask" && asking === item.ev}
+              />
+            ))}
+
+            {asking && (
+              <div className="ask-card">
+                <div className="ask-q">{asking.question}</div>
+                <div className="ask-opts">
+                  {asking.options.map((opt) => (
+                    <button key={opt} className="ask-opt" onClick={() => void answerAsk(opt)}>
+                      {opt}
+                    </button>
                   ))}
                 </div>
-              ) : (
-                <div key={i} className={`bubble ${m.role}`}>
-                  {m.text}
+                <div className="ask-input-row">
+                  <input
+                    value={answer}
+                    onChange={(e) => setAnswer(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) void answerAsk(answer);
+                    }}
+                    placeholder="或者自己写…"
+                  />
+                  <button className="ask-send" onClick={() => void answerAsk(answer)}>
+                    →
+                  </button>
                 </div>
-              )
+              </div>
             )}
-            {loading && <div className="bubble assistant typing">…</div>}
+
+            {running && !asking && <div className="bubble assistant typing">…</div>}
             {error && <div className="bubble error">{error}</div>}
           </div>
-          <div className="chat-foot">{composer}</div>
+          <div className="chat-foot">{composer(asking ? "回答上面的问题，或直接写…" : "可以随时插话")}</div>
         </aside>
       </main>
 
@@ -729,9 +668,7 @@ export default function App() {
             >
               复制
             </button>
-            <button className="trace-close" onClick={() => setTraceOpen(false)}>
-              ×
-            </button>
+            <button className="trace-close" onClick={() => setTraceOpen(false)}>×</button>
           </div>
           <div className="trace-body">
             {logs.length === 0 ? (
@@ -750,6 +687,85 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function countLines(files: Record<string, string>) {
+  return Object.values(files).reduce((n, body) => n + body.split("\n").length - 1, 0);
+}
+
+function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
+  const ev = item.ev;
+
+  if (ev.action === "think") {
+    return <div className="tl think">{ev.text}</div>;
+  }
+
+  if (ev.action === "look") {
+    return <div className="tl look">查看 {ev.path || "项目根目录"}</div>;
+  }
+
+  if (ev.action === "plan") {
+    return (
+      <div className="tl plan">
+        {ev.steps.map((s, i) => (
+          <div key={i} className="plan-step">
+            <span className="plan-i">{i + 1}</span>
+            {s}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (ev.action === "ask") {
+    if (live) return null;
+    return (
+      <div className="tl ask-done">
+        <div>{ev.question}</div>
+        {ev.options.length > 0 && <div className="ask-done-opts">{ev.options.join(" · ")}</div>}
+      </div>
+    );
+  }
+
+  if (ev.action === "write") {
+    return (
+      <div className="tl file-op">
+        <span className="op-tag new">新建</span>
+        <span className="op-path">{ev.path}</span>
+        <span className="op-label">{ev.label}</span>
+      </div>
+    );
+  }
+
+  if (ev.action === "edit") {
+    return (
+      <div className="tl file-op">
+        <span className="op-tag edit">修改</span>
+        <span className="op-path">{ev.path}</span>
+        <span className="op-label">{ev.label}</span>
+      </div>
+    );
+  }
+
+  if (ev.action === "delete") {
+    return (
+      <div className="tl file-op">
+        <span className="op-tag del">删除</span>
+        <span className="op-path">{ev.path}</span>
+        <span className="op-label">{ev.label}</span>
+      </div>
+    );
+  }
+
+  if (ev.action === "error") {
+    return <div className="tl err">{ev.text}</div>;
+  }
+
+  return (
+    <div className="tl finish">
+      {ev.text || "完成"}
     </div>
   );
 }

@@ -1,61 +1,48 @@
-"""Step Coding —— 讲清一个环节的最小例子。
+"""Step Coding 后端。
 
-纯网页版：不碰本地文件、不执行命令、不需要打开项目。
-一个接口：POST /api/explain，返回一份教案，前端负责把它演出来。
+一个接口驱动整个循环：
+
+  POST /api/step   带着「消息历史 + 当前文件」问下一动作
+                   模型一次只回一个：think / look / plan / ask / write / edit / delete / finish
+
+由前端逐轮驱动，所以每一步都看得见，中途也停得住。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import explain
+from . import agent
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
 
-app = FastAPI(title="Step Coding", version="1.0", description="用最小例子讲清一个环节")
+app = FastAPI(title="Step Coding", version="2.0", description="看清它一步一步把东西做出来")
 
 
-class AskIn(BaseModel):
-    question: str
-
-
-class TurnIn(BaseModel):
+class StepIn(BaseModel):
     messages: list[dict[str, str]]
-    files: Optional[dict[str, str]] = None
+    files: dict[str, str] = {}
+    round: int = 0
 
 
-@app.post("/api/explain")
-def post_explain(body: AskIn) -> dict[str, Any]:
-    question = body.question.strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="说说你不懂哪个环节")
+@app.post("/api/step")
+def post_step(body: StepIn) -> dict[str, Any]:
     try:
-        return explain.generate(question)
-    except explain.ExplainError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@app.post("/api/turn")
-def post_turn(body: TurnIn) -> dict[str, Any]:
-    """一轮对话：回一句话，或者给一份新内容。"""
-    if not body.messages:
-        raise HTTPException(status_code=400, detail="没有消息")
-    try:
-        return explain.converse(body.messages, body.files)
-    except explain.ExplainError as exc:
+        return agent.step(body.messages, body.files, body.round)
+    except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "model": explain.MODEL, "configured": explain.has_key()}
+    return {"ok": True, "model": agent.MODEL, "configured": agent.has_key()}
 
 
 if WEB_DIST.exists():
@@ -63,8 +50,6 @@ if WEB_DIST.exists():
 
     @app.get("/")
     def index() -> FileResponse:
-        # 前端每次构建都会换 hash 文件名，但 index.html 本身必须每次重取，
-        # 否则用户刷新后还在跑旧 bundle。
         return FileResponse(
             WEB_DIST / "index.html",
             headers={"Cache-Control": "no-store, must-revalidate"},
