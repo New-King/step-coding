@@ -350,6 +350,14 @@ export default function App() {
     }
   };
 
+  const removeRecent = (path: string) => {
+    setRecent((prev) => {
+      const next = prev.filter((p) => p !== path);
+      localStorage.setItem("stepcoding.recent", JSON.stringify(next));
+      return next;
+    });
+  };
+
   const pickWorkspace = async () => {
     setWsError(null);
     setPicking(true);
@@ -362,29 +370,6 @@ export default function App() {
       setWsError(String(e).replace(/^Error:\s*/, ""));
     } finally {
       setPicking(false);
-    }
-  };
-
-  const refreshWorkspace = async () => {
-    const res = await fetch("/api/workspace");
-    if (res.ok) setWs(await res.json());
-  };
-
-  const deleteFile = async (path: string) => {
-    if (!window.confirm(`删除 ${path}？只会动这个项目里的文件，项目外一律拒绝。`)) return;
-    setWsError(null);
-    try {
-      const res = await fetch("/api/workspace/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "删不掉");
-      if (viewFile?.path === path) setViewFile(null);
-      await refreshWorkspace();
-    } catch (e) {
-      setWsError(String(e).replace(/^Error:\s*/, ""));
     }
   };
 
@@ -444,10 +429,20 @@ export default function App() {
             <div className="welcome-recent">
               <div className="wr-title">最近打开</div>
               {recent.map((path) => (
-                <button key={path} className="wr-item" onClick={() => void openWorkspace(path)}>
+                <div key={path} className="wr-item" onClick={() => void openWorkspace(path)}>
                   <span className="wr-name">{path.split("/").filter(Boolean).pop()}</span>
                   <span className="wr-path">{path.replace(/^\/Users\/[^/]+/, "~")}</span>
-                </button>
+                  <button
+                    className="wr-x"
+                    title="从列表移除"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeRecent(path);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -532,18 +527,6 @@ export default function App() {
                     >
                       {node.type === "dir" && <span className="twist">›</span>}
                       <span className="fname">{node.name}</span>
-                      {node.type === "file" && (
-                        <button
-                          className="file-del"
-                          title="删除"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void deleteFile(node.path);
-                          }}
-                        >
-                          ×
-                        </button>
-                      )}
                     </div>
                   );
                   if (node.type === "dir" && open) walk(node.children, depth + 1);
@@ -587,14 +570,6 @@ export default function App() {
         <aside className="chat">
           <div className="chat-head">对话</div>
           <div className="chat-log">
-            {messages.length === 0 && (
-              <div className="chat-hint">
-                试试：
-                <button className="chip" onClick={() => void start("做一个贪吃蛇小游戏")}>
-                  做一个贪吃蛇
-                </button>
-              </div>
-            )}
             {messages.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
                 {m.text}
