@@ -706,3 +706,12 @@ button {
   color: var(--faint);
   flex: 0 0 auto;
 }
+
+.primary:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.primary:disabled:hover {
+  background: var(--accent);
+}

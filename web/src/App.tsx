@@ -230,12 +230,22 @@ export default function App() {
     }
   };
 
+  const hasContent = Object.values(snap.buffers).some((v) => (v ?? "").trim().length > 0);
+
   const exportZip = () => {
     if (!lesson) return;
-    const entries = lesson.files.map((f) => ({
-      path: f.path,
-      content: snap.buffers[f.path] ?? "",
-    }));
+
+    // 先冻住，避免把正在敲的半行导出去
+    const p = playerRef.current!;
+    if (!p.paused) {
+      p.paused = true;
+      setPaused(true);
+    }
+
+    const entries = lesson.files
+      .map((f) => ({ path: f.path, content: snap.buffers[f.path] ?? "" }))
+      .filter((e) => e.content.trim().length > 0);
+
     const safe = (lesson.title || "step-coding").replace(/[/\\:*?"<>|]/g, "-");
     downloadZip(`${safe}.zip`, entries);
   };
@@ -335,7 +345,9 @@ export default function App() {
         <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
         <button className="ghost" onClick={replay}>重播</button>
         <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
-        <button className="primary" onClick={exportZip}>导出代码</button>
+        <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
+          导出代码
+        </button>
         <button className="ghost" onClick={backToAsk}>换个问题</button>
       </header>
 
