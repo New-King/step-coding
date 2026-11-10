@@ -730,15 +730,19 @@ button {
   border-radius: 12px;
 }
 
-.chat .bubble.meta {
-  align-self: center;
+.chat .bubble.log {
+  align-self: stretch;
   max-width: 100%;
   background: none;
   border: 0;
-  color: var(--faint);
+  border-left: 2px solid var(--line);
+  border-radius: 0;
+  color: var(--muted);
   font-size: 11.5px;
-  padding: 2px 0;
-  text-align: center;
+  line-height: 1.6;
+  padding: 1px 0 1px 9px;
+  margin-left: 2px;
+  animation: rise 0.24s var(--ease) both;
 }
 
 .chat .bubble.error {

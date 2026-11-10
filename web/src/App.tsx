@@ -7,6 +7,7 @@ import python from "highlight.js/lib/languages/python";
 import go from "highlight.js/lib/languages/go";
 import { Player, type Snapshot, type Step } from "./player";
 import { downloadZip } from "./zip";
+import { checkFiles, summarize } from "./check";
 
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("css", css);
@@ -29,7 +30,7 @@ type Lesson = {
   question?: string;
 };
 
-type Msg = { role: "user" | "assistant" | "meta"; text: string };
+type Msg = { role: "user" | "assistant" | "log"; text: string };
 
 const EMPTY: Snapshot = {
   buffers: {},
@@ -98,10 +99,18 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [peek, setPeek] = useState<string | null>(null);
 
+  const lessonRef = useRef<Lesson | null>(null);
+  const loggedRef = useRef(-1);
+  const finishedRef = useRef(false);
+
   useEffect(() => {
     const p = playerRef.current!;
     p.cps = cps;
-    p.onUpdate = setSnap;
+    p.onUpdate = (snap) => {
+      setSnap(snap);
+      logProgress(snap.banner);
+    };
+    p.onFinish = () => finishLesson();
     p.onExhausted = () => {};
 
     const initial = new URLSearchParams(window.location.search).get("q");
@@ -110,6 +119,46 @@ export default function App() {
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 每走到一步，就在右边记一行——右边是过程，不是结论。 */
+  const logProgress = (banner: string) => {
+    const data = lessonRef.current;
+    if (!data) return;
+    const match = /^(\d+)\|/.exec(banner || "");
+    if (!match) return;
+    const idx = Number(match[1]);
+    if (idx <= loggedRef.current) return;
+
+    const fresh: Msg[] = [];
+    for (let i = loggedRef.current + 1; i <= idx; i += 1) {
+      const step = data.steps[i];
+      if (step) fresh.push({ role: "log", text: `${step.file}　${step.label}` });
+    }
+    loggedRef.current = idx;
+    if (fresh.length) setMessages((m) => [...m, ...fresh]);
+  };
+
+  /** 播完了：自己检查一遍，再给结论。 */
+  const finishLesson = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+
+    const data = lessonRef.current;
+    const files = playerRef.current!.files();
+    const issues = checkFiles(files);
+    const stat = summarize(files);
+
+    setMessages((m) => [
+      ...m,
+      { role: "log", text: `写完　${stat}` },
+      {
+        role: "assistant",
+        text: issues.length
+          ? `检查了一遍：\n${issues.map((i) => `· ${i.file}：${i.text}`).join("\n")}`
+          : "检查了一遍：引用对得上，类名也都对得上，没发现问题。",
+      },
+    ]);
+  };
 
   const remember = (data: Lesson) => {
     setHistory((prev) => {
@@ -140,6 +189,9 @@ export default function App() {
     });
     steps.push({ type: "done", text: "讲完了" });
 
+    lessonRef.current = data;
+    loggedRef.current = -1;
+    finishedRef.current = false;
     setPeek(null);
     p.cps = cps;
     p.paused = false;
@@ -183,13 +235,9 @@ export default function App() {
         setLesson(data);
         play(data);
         remember(data);
-        setMessages([
-          ...next,
-          {
-            role: "assistant",
-            text: revising ? `改好了。${data.summary}` : data.summary || "写好了。",
-          },
-        ]);
+        setMessages(
+          revising ? [...next, { role: "log", text: "按你说的重写一版" }] : next
+        );
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
