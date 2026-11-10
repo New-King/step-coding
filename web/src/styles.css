@@ -1747,3 +1747,55 @@ body {
   background: rgba(255, 255, 255, 0.14);
   color: #fff;
 }
+
+/* ---- 状态浮层：真的在操作时从右侧滑出，结束后自动收起 ---- */
+.editor {
+  position: relative;
+}
+
+.status-toast {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.97);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  transform: translateX(calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+  transition: transform 0.38s var(--ease), opacity 0.38s var(--ease);
+}
+
+.status-toast.in {
+  transform: none;
+  opacity: 1;
+}
+
+.st-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: breathe 1.6s var(--ease) infinite;
+}
+
+.st-text {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-count {
+  color: var(--ink-faint, #86868b);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

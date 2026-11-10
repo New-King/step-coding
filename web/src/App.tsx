@@ -316,6 +316,18 @@ export default function App() {
     });
   };
 
+  const working = thinking || snap.typing || (snap.total > 0 && !snap.finished);
+  const [statusOn, setStatusOn] = useState(false);
+
+  useEffect(() => {
+    if (working) {
+      setStatusOn(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setStatusOn(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [working]);
+
   const active = snap.active;
   const text = active ? snap.buffers[active] ?? "" : "";
 
@@ -454,7 +466,6 @@ export default function App() {
     playerRef.current!.cps = value;
   };
 
-  const progress = snap.total ? Math.round((snap.stepIndex / snap.total) * 100) : 0;
 
   if (!ws?.root) {
     return (
@@ -532,16 +543,6 @@ export default function App() {
           )}
         </div>
       </header>
-
-      <div className={`banner ${snap.finished ? "done" : ""}`}>
-        <span className={`pulse ${paused || thinking ? "paused" : ""}`} />
-        <span className="banner-text" key={thinking ? "__thinking" : snap.banner}>
-          {thinking ? "思考下一步…" : snap.banner}
-        </span>
-        <span className="banner-progress">
-          <i style={{ width: `${progress}%` }} />
-        </span>
-      </div>
 
       <main className="body">
         <aside className="tree">
@@ -634,6 +635,16 @@ export default function App() {
               </div>
             ) : (
               <div className="placeholder">从左边选一个文件</div>
+            )}
+          </div>
+
+          <div className={`status-toast ${statusOn ? "in" : ""}`}>
+            <span className="st-dot" />
+            <span className="st-text">{thinking ? "思考中…" : snap.banner}</span>
+            {snap.total > 0 && (
+              <span className="st-count">
+                {snap.stepIndex}/{snap.total}
+              </span>
             )}
           </div>
         </section>
