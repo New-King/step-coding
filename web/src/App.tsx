@@ -101,6 +101,8 @@ export default function App() {
   const [peek, setPeek] = useState<string | null>(null);
 
   const lessonRef = useRef<Lesson | null>(null);
+  const historyRef = useRef<{ role: string; content: string }[]>([]);
+  const fixRoundRef = useRef(0);
   const loggedRef = useRef(-1);
   const finishedRef = useRef(false);
 
@@ -139,26 +141,71 @@ export default function App() {
     if (fresh.length) setMessages((m) => [...m, ...fresh]);
   };
 
-  /** 播完了：自己检查一遍，再给结论。 */
-  const finishLesson = () => {
+  /** 播完了：自己检查一遍；查出问题就回去修，修完再查。 */
+  const finishLesson = async () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
 
     const data = lessonRef.current;
+    if (!data) return;
     const files = playerRef.current!.files();
     const issues = checkFiles(files);
-    const stat = summarize(files);
 
+    setMessages((m) => [...m, { role: "log", text: `写完　${summarize(files)}` }]);
+
+    if (issues.length === 0) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: "检查了一遍：引用对得上，类名也都对得上，没发现问题。" },
+      ]);
+      return;
+    }
+
+    const list = issues.map((i) => `· ${i.file}：${i.text}`).join("\n");
+
+    if (fixRoundRef.current >= 2) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: `还是有问题，先停在这里：\n${list}` },
+      ]);
+      return;
+    }
+
+    fixRoundRef.current += 1;
     setMessages((m) => [
       ...m,
-      { role: "log", text: `写完　${stat}` },
-      {
-        role: "assistant",
-        text: issues.length
-          ? `检查了一遍：\n${issues.map((i) => `· ${i.file}：${i.text}`).join("\n")}`
-          : "检查了一遍：引用对得上，类名也都对得上，没发现问题。",
-      },
+      { role: "assistant", text: `检查查出 ${issues.length} 处问题：\n${list}` },
+      { role: "log", text: "回去改这几处" },
     ]);
+
+    historyRef.current.push({
+      role: "user",
+      content: `你刚写出来的文件有问题，请改好，重新给出完整文件：\n${list}`,
+    });
+
+    setLoading(true);
+    try {
+      const res = await postJson("/api/turn", {
+        messages: historyRef.current,
+        current: data,
+      });
+      if (res.action === "build") {
+        const next: Lesson = { ...res.lesson };
+        historyRef.current.push({ role: "assistant", content: `改好了：${next.title}` });
+        setLesson(next);
+        play(next);
+      } else {
+        historyRef.current.push({ role: "assistant", content: res.text });
+        setMessages((m) => [...m, { role: "assistant", text: res.text }]);
+      }
+    } catch (e) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: `想改但没改成：${String(e).replace(/^Error:\s*/, "")}` },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const remember = (data: Lesson) => {
@@ -212,6 +259,11 @@ export default function App() {
 
     setStarted(true);
     const revising = lesson !== null;
+    if (!revising) {
+      historyRef.current = [];
+      fixRoundRef.current = 0;
+    }
+    historyRef.current.push({ role: "user", content: value });
     const next: Msg[] = [...messages, { role: "user", text: value }];
     setMessages(next);
     setQuestion("");
@@ -226,14 +278,17 @@ export default function App() {
 
     try {
       const res = await postJson("/api/turn", {
-        messages: next.map((m) => ({ role: m.role, content: m.text })),
+        messages: historyRef.current,
         current: lesson,
       });
 
       if (res.action === "reply") {
+        historyRef.current.push({ role: "assistant", content: res.text });
         setMessages([...next, { role: "assistant", text: res.text }]);
       } else {
         const data: Lesson = { ...res.lesson, question: value };
+        historyRef.current.push({ role: "assistant", content: `写好了：${data.title}` });
+        fixRoundRef.current = 0;
         setLesson(data);
         play(data);
         remember(data);
