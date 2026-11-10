@@ -81,6 +81,7 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [started, setStarted] = useState(false);
   const [history, setHistory] = useState<Lesson[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -209,6 +210,7 @@ export default function App() {
     const value = text.trim();
     if (!value || loading) return;
 
+    setStarted(true);
     const revising = lesson !== null;
     const next: Msg[] = [...messages, { role: "user", text: value }];
     setMessages(next);
@@ -251,6 +253,7 @@ export default function App() {
   const reset = () => {
     playerRef.current!.stop();
     setLesson(null);
+    setStarted(false);
     setSnap(EMPTY);
     setMessages([]);
     setError(null);
@@ -352,44 +355,27 @@ export default function App() {
 
   /* ---------------------------------------------------------- 欢迎页（独立页面） */
 
-  if (!lesson) {
-    const talking = messages.length > 0;
+  if (!started) {
     return (
       <div className="ask">
         <div className="ask-hero">
           <div className="ask-inner">
-            {!talking && (
-              <>
-                <div className="ask-mark" />
-                <h1>想弄懂什么？</h1>
-                <p>说一句，它写个最小的例子给你看。</p>
-                <div className="ask-examples">
-                  {EXAMPLES.map((item) => (
-                    <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {talking && (
-              <div className="chat-log">
-                {messages.map((m, i) => (
-                  <div key={i} className={`bubble ${m.role}`}>
-                    {m.text}
-                  </div>
-                ))}
-                {loading && <div className="bubble assistant typing">…</div>}
-                {error && <div className="bubble error">{error}</div>}
-              </div>
-            )}
-
+            <div className="ask-mark" />
+            <h1>想弄懂什么？</h1>
+            <p>说一句，它写个最小的例子给你看。</p>
+            <div className="ask-examples">
+              {EXAMPLES.map((item) => (
+                <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
             {composer}
+            {error && <div className="ask-error">{error}</div>}
           </div>
         </div>
 
-        {!talking && history.length > 0 && (
+        {history.length > 0 && (
           <section className="ask-history">
             <div className="history-title">
               <span>最近</span>
@@ -409,6 +395,7 @@ export default function App() {
                   key={item.title + (item.question ?? "")}
                   className="history-item"
                   onClick={() => {
+                    setStarted(true);
                     setMessages([
                       { role: "user", text: item.question ?? item.title },
                       { role: "assistant", text: item.summary },
@@ -536,7 +523,12 @@ export default function App() {
                 </div>
               </div>
             </>
-          ) : null}
+          ) : (
+            <div className="stage-empty">
+              <span className="stage-dot" />
+              <div className="stage-hint">正在写…</div>
+            </div>
+          )}
         </section>
 
         <aside className="chat">

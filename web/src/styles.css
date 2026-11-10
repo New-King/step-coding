@@ -962,10 +962,6 @@ button {
   padding: 40px 24px 18vh;
 }
 
-.ask-hero:has(.chat-log) {
-  align-items: end;
-  padding-bottom: 34px;
-}
 
 .ask-inner {
   width: 100%;
@@ -1013,11 +1009,6 @@ button {
   margin-bottom: 14px;
 }
 
-.ask-inner .chat-log {
-  flex: 0 1 auto;
-  max-height: 56vh;
-  padding-bottom: 14px;
-}
 
 .ask-history {
   flex: 0 0 auto;
@@ -1057,4 +1048,24 @@ button {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+/* 等待内容时的中间占位 */
+.stage-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: breathe 1.3s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.ask-error {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #b3261e;
 }
