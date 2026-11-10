@@ -14,12 +14,14 @@ hljs.registerLanguage("python", python);
 hljs.registerLanguage("go", go);
 
 type LessonNode = { label: string; desc: string };
-type LessonStep = { label: string; focus: number; code: string };
+type LessonFile = { path: string; lang: string };
+type LessonStep = { label: string; file: string; focus: number; code: string };
 type Lesson = {
   title: string;
-  language: string;
   summary: string;
-  nodes: LessonNode[];
+  kind: string;
+  files: LessonFile[];
+  flow: LessonNode[];
   steps: LessonStep[];
   lines: number;
   tooLong: boolean;
@@ -80,6 +82,7 @@ export default function App() {
     return Number.isFinite(v) && v > 0 ? v : 60;
   });
   const [copied, setCopied] = useState(false);
+  const [peek, setPeek] = useState<string | null>(null);
 
   useEffect(() => {
     const p = playerRef.current!;
@@ -96,23 +99,30 @@ export default function App() {
 
   const play = (data: Lesson) => {
     const p = playerRef.current!;
+    const files: Record<string, string> = {};
+    data.files.forEach((f) => {
+      files[f.path] = "";
+    });
+
     const steps: Step[] = [
-      { type: "create", path: "example", banner: "准备", delay: 260 },
+      { type: "create", path: data.files[0].path, banner: "准备", delay: 200 },
     ];
     data.steps.forEach((step, i) => {
       const tag = `${i}|${step.label}`;
-      steps.push({ type: "banner", text: tag, delay: 300 });
-      steps.push({ type: "append", path: "example", text: step.code, banner: tag });
+      steps.push({ type: "banner", text: tag, delay: 260 });
+      steps.push({ type: "append", path: step.file, text: step.code, banner: tag });
     });
     steps.push({ type: "done", text: "讲完了" });
+
+    setPeek(null);
     p.cps = cps;
     p.paused = false;
     setPaused(false);
     p.load({
       task: data.title,
       steps,
-      files: { example: "" },
-      stats: { files: 1, steps: steps.length, lines: data.lines },
+      files,
+      stats: { files: data.files.length, steps: steps.length, lines: data.lines },
     });
   };
 
@@ -142,7 +152,15 @@ export default function App() {
     setPaused(p.paused);
   };
 
-  const code = snap.buffers["example"] ?? "";
+  const fileList = lesson?.files ?? [];
+  const activeFile =
+    peek ??
+    (snap.active && fileList.some((f) => f.path === snap.active)
+      ? snap.active
+      : fileList[0]?.path ?? "");
+
+  const code = activeFile ? snap.buffers[activeFile] ?? "" : "";
+  const langName = fileList.find((f) => f.path === activeFile)?.lang ?? "javascript";
 
   const [stepIndex, stepLabel] = useMemo(() => {
     const raw = snap.banner || "";
@@ -152,7 +170,8 @@ export default function App() {
   }, [snap.banner]);
 
   const finished = snap.finished;
-  const displayIndex = finished ? lesson.steps.length : Math.max(stepIndex + 1, 0);
+  const totalSteps = lesson?.steps.length ?? 0;
+  const displayIndex = finished ? totalSteps : Math.max(stepIndex + 1, 0);
   const displayLabel = finished ? "讲完了" : stepLabel;
   const focus =
     lesson && !finished && stepIndex >= 0 ? lesson.steps[stepIndex]?.focus ?? -1 : -1;
@@ -160,11 +179,11 @@ export default function App() {
   const highlighted = useMemo(() => {
     if (!code) return "";
     try {
-      return hljs.highlight(code, { language: langOf(lesson?.language ?? "javascript") }).value;
+      return hljs.highlight(code, { language: langOf(langName) }).value;
     } catch {
       return code;
     }
-  }, [code, lesson?.language]);
+  }, [code, langName]);
 
   const copy = async () => {
     try {
@@ -245,9 +264,10 @@ export default function App() {
         </button>
       </header>
 
+      {lesson.flow.length >= 2 && (
       <div className="flow-wrap">
         <div className="flow">
-          {lesson.nodes.map((node, i) => (
+          {lesson.flow.map((node, i) => (
             <div key={`${node.label}-${i}`} className="flow-item">
               {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
               <div className={`node ${focus === i ? "on" : ""}`}>
@@ -258,11 +278,12 @@ export default function App() {
           ))}
         </div>
       </div>
+      )}
 
       <main className="stage">
         <div className="step-note">
           <span className="note-index">
-            {displayIndex}/{lesson.steps.length}
+            {displayIndex}/{totalSteps}
           </span>
           <span className="note-text" key={displayLabel}>{displayLabel}</span>
           {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
@@ -270,7 +291,15 @@ export default function App() {
 
         <div className="code-card">
           <div className="code-head">
-            <span className="code-lang">{lesson.language}</span>
+            {fileList.map((f) => (
+              <button
+                key={f.path}
+                className={`code-tab ${activeFile === f.path ? "on" : ""}`}
+                onClick={() => setPeek(f.path)}
+              >
+                {f.path}
+              </button>
+            ))}
             <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
           </div>
           <div className="code">

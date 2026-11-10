@@ -40,8 +40,9 @@ BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rs
 MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 MAX_NODES = 4
-MAX_STEPS = 6
-MAX_LINES = 60
+MAX_FILES = 4
+MAX_STEPS = 12
+MAX_LINES = 160
 
 
 class ExplainError(RuntimeError):
@@ -52,37 +53,41 @@ def has_key() -> bool:
     return bool(API_KEY)
 
 
-SYSTEM = """你是一个很会讲代码的老师。用户说他不懂某个"环节"，你要用一个最小例子把它讲明白。
+SYSTEM = """你是一个很会讲代码的老师。用户想弄懂一件事——可能是一个概念、
+一个环节，也可能是"帮我写个页面看看长什么样"。你用最小的例子讲给他看。
 
 只输出一个 JSON 对象，不要任何解释：
 
 {
-  "title": "这个环节叫什么，12 字以内",
-  "language": "javascript / python / go / ... （用真实语言，不要伪代码）",
-  "summary": "一句话说清这个环节在干什么，40 字以内",
-  "nodes": [
+  "title": "这件事叫什么，14 字以内",
+  "summary": "一句话说清，40 字以内",
+  "kind": "concept | flow | ui",
+  "files": [
+    {"path": "app.js", "lang": "javascript"}
+  ],
+  "flow": [
     {"label": "角色名，6 字以内", "desc": "它在干什么，20 字以内"}
   ],
   "steps": [
-    {
-      "label": "这一步在写什么，12 字以内",
-      "focus": 0,
-      "code": "这一段的代码，以换行结尾"
-    }
+    {"label": "这一步在写什么，14 字以内", "file": "app.js", "focus": 0, "code": "这段代码，换行结尾"}
   ]
 }
 
 硬性要求：
-1. nodes 只放 2～4 个。它们是这个环节里真正互相作用的角色，
-   比如 请求 / 鉴权中间件 / 处理函数，或者 状态 / 渲染 / 副作用。
-   不要放"用户""浏览器"这种没信息量的东西。
-2. steps 只放 3～6 个。所有 code 按顺序拼起来，就是完整例子。
-3. **总代码不超过 60 行**。宁可少讲一个细节，也不要写长。
-4. 只留主干：不要 import、不要 package.json、不要错误处理的样板、
-   不要注释块、不要 console.log 调试行。用户要的是"关系"，不是能跑的工程。
+1. files 1～4 个。小界面通常 index.html + style.css + app.js；
+   讲概念常常只要一个文件。
+2. steps 3～12 个。同一个文件的多段代码按顺序拼起来，就是完整文件。
+3. **总代码不超过 160 行**（讲概念时更少，控制在 60 行内更好）。
+   宁可少讲一个细节，也不要写长。
+4. 只留主干：不要 import、不要 package.json、不要构建配置、不要错误处理样板、
+   不要大段注释。用户要的是看懂，不是能上线。
 5. 但语法必须是真实语言的，能直接看懂、能抄走。不要写伪代码。
-6. focus 是这个步骤对应的 nodes 下标（从 0 开始）。
-7. 语言跟随用户问题里提到的技术栈；没提就用 javascript。"""
+6. flow 是可选的：
+   - 如果这件事是"几个部分怎么配合"（中间件链、请求生命周期、数据流），
+     就给 2～4 个节点，并在 steps 里用 focus 指向当前节点。
+   - 如果只是"写一个页面长什么样"，flow 给空数组 []。
+7. kind 说明：concept=讲概念，flow=讲流程/环节，ui=写界面。
+8. 语言跟随用户问题里提到的技术栈；没提就按最合适的来（界面用 html/css/js）。"""
 
 
 def _chat(messages: list[dict[str, str]]) -> str:
@@ -93,7 +98,7 @@ def _chat(messages: list[dict[str, str]]) -> str:
         "model": MODEL,
         "messages": messages,
         "temperature": 0.3,
-        "max_tokens": 3000,
+        "max_tokens": 4000,
         "response_format": {"type": "json_object"},
     }
     req = urllib.request.Request(
@@ -121,14 +126,16 @@ def _lines(text: str) -> int:
 
 
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
-    nodes = []
-    for item in (raw.get("nodes") or [])[:MAX_NODES]:
-        label = str(item.get("label") or "").strip()
-        if not label:
+    files = []
+    for item in (raw.get("files") or [])[:MAX_FILES]:
+        path = str(item.get("path") or "").strip().lstrip("/")
+        if not path:
             continue
-        nodes.append({"label": label[:12], "desc": str(item.get("desc") or "").strip()[:40]})
-    if len(nodes) < 2:
-        raise ExplainError("这个环节拆不出至少两个角色，换个说法试试")
+        files.append({"path": path, "lang": str(item.get("lang") or "javascript").lower()[:16]})
+    if not files:
+        raise ExplainError("没有生成出文件")
+
+    paths = [f["path"] for f in files]
 
     steps = []
     for item in (raw.get("steps") or [])[:MAX_STEPS]:
@@ -137,26 +144,43 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
             continue
         if not code.endswith("\n"):
             code += "\n"
+        target = str(item.get("file") or paths[0]).strip().lstrip("/")
+        if target not in paths:
+            target = paths[0]
         try:
             focus = int(item.get("focus", 0))
         except (TypeError, ValueError):
             focus = 0
         steps.append(
             {
-                "label": str(item.get("label") or "继续").strip()[:20],
-                "focus": max(0, min(len(nodes) - 1, focus)),
+                "label": str(item.get("label") or "继续").strip()[:24],
+                "file": target,
+                "focus": max(0, focus),
                 "code": code,
             }
         )
     if not steps:
         raise ExplainError("没生成出可讲的步骤")
 
+    flow = []
+    for item in (raw.get("flow") or [])[:MAX_NODES]:
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        flow.append({"label": label[:12], "desc": str(item.get("desc") or "").strip()[:40]})
+    if len(flow) < 2:
+        flow = []
+
+    for step in steps:
+        step["focus"] = max(0, min(len(flow) - 1, step["focus"])) if flow else -1
+
     total = sum(_lines(s["code"]) for s in steps)
     return {
-        "title": str(raw.get("title") or "这个环节").strip()[:30],
-        "language": str(raw.get("language") or "javascript").strip().lower()[:20],
+        "title": str(raw.get("title") or "这件事").strip()[:30],
         "summary": str(raw.get("summary") or "").strip()[:60],
-        "nodes": nodes,
+        "kind": str(raw.get("kind") or "concept").strip()[:12],
+        "files": files,
+        "flow": flow,
         "steps": steps,
         "lines": total,
         "tooLong": total > MAX_LINES,
@@ -167,10 +191,7 @@ def generate(question: str) -> dict[str, Any]:
     text = _chat(
         [
             {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": f"我不懂这个环节：{question}\n\n用最小例子讲给我看。",
-            },
+            {"role": "user", "content": f"我想弄懂：{question}\n\n用最小的例子讲给我看。"},
         ]
     )
     try:
