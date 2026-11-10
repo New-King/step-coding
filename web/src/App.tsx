@@ -41,38 +41,7 @@ type Written = {
   written?: boolean;
 };
 
-type TreeNode = {
-  name: string;
-  path: string;
-  type: "file" | "dir";
-  size?: number;
-  children: TreeNode[];
-};
-
-/** 扁平路径列表 → 目录树。默认全折叠，点目录才展开。 */
-function buildTree(files: WsFile[]): TreeNode[] {
-  const roots: TreeNode[] = [];
-  const byPath = new Map<string, TreeNode>();
-
-  for (const f of files) {
-    const node: TreeNode = { name: f.name, path: f.path, type: f.type, size: f.size, children: [] };
-    byPath.set(f.path, node);
-
-    const slash = f.path.lastIndexOf("/");
-    const parent = slash > 0 ? byPath.get(f.path.slice(0, slash)) : undefined;
-    if (parent) parent.children.push(node);
-    else roots.push(node);
-  }
-
-  const sort = (list: TreeNode[]) => {
-    list.sort((a, b) =>
-      a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1
-    );
-    list.forEach((item) => sort(item.children));
-  };
-  sort(roots);
-  return roots;
-}
+type DirEntry = { path: string; name: string; type: "dir" | "file"; size?: number };
 
 function langOf(path: string) {
   if (path.endsWith(".css")) return "css";
@@ -144,6 +113,8 @@ export default function App() {
   });
   const [picking, setPicking] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dirs, setDirs] = useState<Record<string, DirEntry[]>>({});
+  const dirsLoaded = useRef<Set<string>>(new Set());
   const [tabs, setTabs] = useState<{ path: string; preview: boolean }[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [contents, setContents] = useState<Record<string, string>>({});
@@ -305,15 +276,38 @@ export default function App() {
     }
   }
 
-  const tree = useMemo(() => buildTree(ws?.files ?? []), [ws]);
+  async function loadDir(path: string) {
+    if (dirsLoaded.current.has(path)) return;
+    dirsLoaded.current.add(path);
+    try {
+      const res = await fetch(`/api/workspace/list?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "读不了目录");
+      setDirs((prev) => ({ ...prev, [path]: data.entries }));
+    } catch (e) {
+      dirsLoaded.current.delete(path);
+      setError(String(e).replace(/^Error:\s*/, ""));
+    }
+  }
+
+  // 换项目就清空缓存，只拉第一层
+  useEffect(() => {
+    setDirs({});
+    setExpanded(new Set());
+    dirsLoaded.current = new Set();
+    if (ws?.root) void loadDir("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws?.root]);
 
   const toggleDir = (path: string) => {
+    const willOpen = !expanded.has(path);
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (willOpen) next.add(path);
+      else next.delete(path);
       return next;
     });
+    if (willOpen) void loadDir(path);
   };
 
   const working = thinking || snap.typing || (snap.total > 0 && !snap.finished);
@@ -556,8 +550,8 @@ export default function App() {
           <div className="tree-scroll">
             {(() => {
               const rows: JSX.Element[] = [];
-              const walk = (nodes: TreeNode[], depth: number) => {
-                for (const node of nodes) {
+              const walk = (dirPath: string, depth: number) => {
+                for (const node of dirs[dirPath] ?? []) {
                   const open = expanded.has(node.path);
                   rows.push(
                     <div
@@ -578,13 +572,12 @@ export default function App() {
                       <span className="fname">{node.name}</span>
                     </div>
                   );
-                  if (node.type === "dir" && open) walk(node.children, depth + 1);
+                  if (node.type === "dir" && open) walk(node.path, depth + 1);
                 }
               };
-              walk(tree, 0);
+              walk("", 0);
               return rows;
             })()}
-            {ws.truncated && <div className="tree-empty">文件太多，已截断</div>}
           </div>
         </aside>
 

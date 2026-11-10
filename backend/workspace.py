@@ -22,6 +22,7 @@ IGNORE = {
 MAX_FILES = 3000
 MAX_DEPTH = 6
 MAX_READ = 200_000
+MAX_ENTRIES = 500
 
 
 class WorkspaceError(RuntimeError):
@@ -42,7 +43,7 @@ class Workspace:
             raise WorkspaceError(f"不是目录：{target}")
 
         self.root = target
-        return self.snapshot()
+        return self.light()
 
     def close(self) -> None:
         self.root = None
@@ -61,6 +62,12 @@ class Workspace:
         return target
 
     # ------------------------------------------------------------ 读
+
+    def light(self) -> dict[str, Any]:
+        """只报项目本身，不遍历内容——树由 list_dir 按需一层层取。"""
+        if self.root is None:
+            return {"root": None, "name": None}
+        return {"root": str(self.root), "name": self.root.name}
 
     def snapshot(self) -> dict[str, Any]:
         if self.root is None:
@@ -118,6 +125,38 @@ class Workspace:
             "total": len(files),
             "truncated": state["truncated"],
         }
+
+    def list_dir(self, rel: str = "") -> dict[str, Any]:
+        """只列一层。前端展开目录时再问下一层，不用一次把整棵树搬到内存。"""
+        if self.root is None:
+            raise WorkspaceError("还没有打开项目")
+
+        target = self.resolve(rel) if rel else self.root
+        if not target.is_dir():
+            raise WorkspaceError(f"不是目录：{rel}")
+
+        try:
+            items = sorted(target.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+        except OSError as exc:
+            raise WorkspaceError(f"读不了目录：{rel}") from exc
+
+        entries: list[dict[str, Any]] = []
+        for entry in items:
+            name = entry.name
+            if name.startswith(".") or name in IGNORE:
+                continue
+            child = entry.relative_to(self.root).as_posix()
+            if entry.is_dir():
+                entries.append({"path": child, "name": name, "type": "dir"})
+            elif entry.is_file():
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = 0
+                entries.append({"path": child, "name": name, "type": "file", "size": size})
+
+        truncated = len(entries) > MAX_ENTRIES
+        return {"path": rel, "entries": entries[:MAX_ENTRIES], "truncated": truncated}
 
     def read(self, rel: str) -> dict[str, Any]:
         path = self.resolve(rel)

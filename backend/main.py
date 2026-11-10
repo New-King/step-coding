@@ -87,7 +87,7 @@ def post_write(body: WriteIn) -> dict[str, Any]:
 
 @app.get("/api/workspace")
 def get_workspace() -> dict[str, Any]:
-    return ws.snapshot()
+    return ws.light()
 
 
 @app.post("/api/workspace/pick")
@@ -108,6 +108,15 @@ def open_workspace(body: OpenIn) -> dict[str, Any]:
 def close_workspace() -> dict[str, Any]:
     ws.close()
     return ws.snapshot()
+
+
+@app.get("/api/workspace/list")
+def list_workspace_dir(path: str = "") -> dict[str, Any]:
+    """只列一层目录；展开某个目录时前端再请求它的下一层。"""
+    try:
+        return ws.list_dir(path)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/workspace/file")
