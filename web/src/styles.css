@@ -64,7 +64,8 @@ button {
   min-height: 0;
   display: grid;
   place-items: center;
-  padding: 48px 24px 24px;
+  /* 底部留白更大 → 视觉重心上移，避免整块压在正中 */
+  padding: 40px 24px 18vh;
 }
 
 .ask-inner {
