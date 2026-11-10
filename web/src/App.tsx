@@ -539,6 +539,7 @@ export default function App() {
             <>
               {lesson.flow.length >= 2 && (
                 <div className="flow-wrap">
+                  <div className="flow-caption">这几部分怎么串起来</div>
                   <div className="flow">
                     {lesson.flow.map((node, i) => (
                       <div key={`${node.label}-${i}`} className="flow-item">
