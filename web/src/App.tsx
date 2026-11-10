@@ -302,6 +302,84 @@ export default function App() {
     </div>
   );
 
+  /* ---------------------------------------------------------- 欢迎页（独立页面） */
+
+  if (!lesson) {
+    const talking = messages.length > 0;
+    return (
+      <div className="ask">
+        <div className="ask-hero">
+          <div className="ask-inner">
+            {!talking && (
+              <>
+                <div className="ask-mark" />
+                <h1>想弄懂什么？</h1>
+                <p>说一句，它写个最小的例子给你看。</p>
+                <div className="ask-examples">
+                  {EXAMPLES.map((item) => (
+                    <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {talking && (
+              <div className="chat-log">
+                {messages.map((m, i) => (
+                  <div key={i} className={`bubble ${m.role}`}>
+                    {m.text}
+                  </div>
+                ))}
+                {loading && <div className="bubble assistant typing">…</div>}
+                {error && <div className="bubble error">{error}</div>}
+              </div>
+            )}
+
+            {composer}
+          </div>
+        </div>
+
+        {!talking && history.length > 0 && (
+          <section className="ask-history">
+            <div className="history-title">
+              <span>最近</span>
+              <button
+                className="history-clear"
+                onClick={() => {
+                  localStorage.removeItem(HISTORY_KEY);
+                  setHistory([]);
+                }}
+              >
+                清空
+              </button>
+            </div>
+            <div className="history-list">
+              {history.map((item) => (
+                <button
+                  key={item.title + (item.question ?? "")}
+                  className="history-item"
+                  onClick={() => {
+                    setMessages([
+                      { role: "user", text: item.question ?? item.title },
+                      { role: "assistant", text: item.summary },
+                    ]);
+                    setLesson(item);
+                    play(item);
+                  }}
+                >
+                  <span className="hi-title">{item.title}</span>
+                  <span className="hi-meta">{item.files.length} 个文件 · {item.lines} 行</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    );
+  }
+
   const branding = lesson?.title ?? "Step Coding";
   const subtitle = lesson?.summary ?? "说一句，它写个最小的例子给你看。";
 
@@ -410,23 +488,7 @@ export default function App() {
                 </div>
               </div>
             </>
-          ) : (
-            <div className="stage-welcome">
-              <div className="ask-mark" />
-              <h1>想弄懂什么？</h1>
-              <p>说一句，它写个最小的例子给你看。</p>
-
-              <div className="ask-examples">
-                {EXAMPLES.map((item) => (
-                  <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              {composer}
-            </div>
-          )}
+          ) : null}
         </section>
 
         <aside className="chat">
@@ -434,9 +496,6 @@ export default function App() {
           <div className="chat-log">
             {messages.length === 0 && (
               <div className="chat-intro">
-                {history.length === 0 && (
-                  <div className="chat-intro-sub">说一句，来往会记在这里。</div>
-                )}
                 {history.length > 0 && (
                   <>
                     <div className="chat-intro-sub recent">最近</div>
@@ -470,7 +529,7 @@ export default function App() {
             {loading && <div className="bubble assistant typing">…</div>}
             {error && <div className="bubble error">{error}</div>}
           </div>
-          {lesson && <div className="chat-foot">{composer}</div>}
+          <div className="chat-foot">{composer}</div>
         </aside>
       </main>
     </div>

@@ -942,3 +942,115 @@ button {
   width: 100%;
   max-width: 520px;
 }
+
+/* ---- 欢迎页（独立页面，居中） ---- */
+.ask {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-hero {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 40px 24px 18vh;
+}
+
+.ask-hero:has(.chat-log) {
+  align-items: end;
+  padding-bottom: 34px;
+}
+
+.ask-inner {
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--accent);
+  position: relative;
+  margin: 0 auto 16px;
+}
+
+.ask-mark::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.ask-inner h1 {
+  margin: 0 0 7px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+
+.ask-inner p {
+  margin: 0 0 22px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ask-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.ask-inner .chat-log {
+  flex: 0 1 auto;
+  max-height: 56vh;
+  padding-bottom: 14px;
+}
+
+.ask-history {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 16px 24px 26px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.history-clear {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.history-clear:hover {
+  color: var(--ink);
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
