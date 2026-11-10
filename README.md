@@ -188,6 +188,20 @@ open http://127.0.0.1:8790
 
 还有看门狗：等超过 75 秒会放开输入并提示，不会一直转圈。
 
+### 不许"光说不做"
+
+模型有时会回一句"我这就拆成 style.css 和 app.js"然后就结束了——界面不动，
+看着像卡死。后端会识别这种"说了要动手但没给操作"的回复，当场逼它把 ops 交出来：
+
+```
+turn.parsed            action=reply ops=0
+turn.promise_without_ops  text="我这就拆成 style.css 和 app.js"
+turn.promise_retry     ops=4
+turn.done              ops=4
+```
+
+规则也写进了 prompt：要么这一轮给出 ops 把事做完，要么明确问一句（带问号）。
+
 ## 结构
 
 ```

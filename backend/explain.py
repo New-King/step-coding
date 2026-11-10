@@ -126,8 +126,9 @@ SYSTEM = """你是一个很会讲代码的人，也是干活的。用户想弄�
 - 追问上一段代码是什么意思（能用话讲清就别改代码）
 - 连做什么都没说清（比如只说了"帮我搞个东西"）
 
-如果你已经决定动手（比如回答"我这就拆"），就必须在同一轮里给出 ops，
-不要只说要做什么然后等用户再说一遍。
+**绝对不要写"我这就改/我马上拆"然后结束**。只有两种收尾：
+要么这一轮直接给出 ops 把事做完，要么明确问一句（以问号结尾）。
+说了要做却不给 ops，等于把用户晾在那里。
 
 注意：风格、配色、布局这类细节不要问，自己选一个合理的直接做。
 一次只问一个问题。
@@ -175,6 +176,21 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
         return json.loads(content)
     except json.JSONDecodeError as exc:
         raise ExplainError("模型返回的不是合法 JSON") from exc
+
+
+PROMISE_WORDS = (
+    "这就", "马上", "立刻", "现在就", "我来", "我拆", "我改", "我加",
+    "重写", "给你改", "帮你改", "这就拆", "就拆", "开始拆",
+)
+
+
+def promises_action(text: str) -> bool:
+    """说了要动手却没给操作——这是 bug，不是"在等确认"。"""
+    if not text:
+        return False
+    if "？" in text or "?" in text:
+        return False
+    return any(word in text for word in PROMISE_WORDS)
 
 
 def render_context(files: dict[str, str]) -> str:
@@ -326,6 +342,34 @@ def converse(
         said = str(raw.get("text") or "").strip()
         if not said:
             raise ExplainError("模型没说话")
+
+        if promises_action(said):
+            # 说了"我这就拆"却没给操作：当场逼它给，不许只承诺
+            trace("turn.promise_without_ops", text=said[:80])
+            msgs.append({"role": "assistant", "content": said})
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "你说了要动手。现在直接给出这一轮的 ops，把这件事做完，"
+                        "不要再描述一遍、也不要再问。"
+                    ),
+                }
+            )
+            raw = _chat(msgs)
+            ops = _ops(raw)
+            trace("turn.promise_retry", ops=len(ops))
+            if not ops:
+                raise ExplainError("它说要改但没给出操作，再说一次「直接改」试试")
+            state, problems = _apply(ops, current)
+            if problems:
+                trace("validate.problems", problems=[p["reason"] for p in problems])
+                raise ExplainError("要改的地方和原文对不上，换个说法我再试一次")
+            lesson = _lesson(raw, state, ops)
+            trace("turn.done", title=lesson["title"], files=len(lesson["files"]),
+                  lines=lesson["lines"], ops=len(lesson["ops"]))
+            return {"action": "build", "lesson": lesson}
+
         trace("turn.reply", text=said[:80])
         return {"action": "reply", "text": said[:200]}
 
