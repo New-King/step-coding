@@ -127,6 +127,10 @@ export default function App() {
     return Number.isFinite(v) && v > 0 ? v : 60;
   });
   const [copied, setCopied] = useState(false);
+  const [traceOpen, setTraceOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("trace") === "1"
+  );
+  const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
   const [peek, setPeek] = useState<string | null>(null);
 
   const lessonRef = useRef<Lesson | null>(null);
@@ -138,6 +142,31 @@ export default function App() {
   const baseRef = useRef<Record<string, string>>({});
   const playingRef = useRef(false);
   const [ghostLabel, setGhostLabel] = useState("");
+  const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
+  const watchdogRef = useRef(0);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /** 等太久就放开输入，别让人对着转圈发呆。 */
+  const armWatchdog = () => {
+    window.clearTimeout(watchdogRef.current);
+    watchdogRef.current = window.setTimeout(() => {
+      note("watchdog", "等待超时，已放开输入");
+      setLoading(false);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: "这次等太久了，没等到回复。再发一次试试。" },
+      ]);
+    }, 75000);
+  };
+  const disarmWatchdog = () => window.clearTimeout(watchdogRef.current);
+
+  /** 一条 trace：既进浏览器控制台，也留在面板里。出问题先看这里。 */
+  const note = (tag: string, text: string) => {
+    const entry = { t: Date.now(), tag, text };
+    logsRef.current = [...logsRef.current.slice(-199), entry];
+    setLogs(logsRef.current);
+    console.info(`[step-coding] ${tag} · ${text}`);
+  };
 
   useEffect(() => {
     const p = playerRef.current!;
@@ -148,6 +177,7 @@ export default function App() {
       logProgress(s.banner);
     };
     p.onFinish = () => void finishLesson();
+    p.onExhausted = () => note("player", "队列空了");
     p.onExhausted = () => {};
 
     const initial = new URLSearchParams(window.location.search).get("q");
@@ -194,6 +224,7 @@ export default function App() {
     p.cps = cps;
     p.paused = false;
     setPaused(false);
+    note("play", `${data.ops.length} 个操作 · ${data.ops.map((o) => o.kind).join("/")}`);
     p.load({
       task: data.title,
       steps,
@@ -230,6 +261,7 @@ export default function App() {
     const files = playerRef.current!.files();
     const issues = checkFiles(files);
 
+    note("finish", `${Object.keys(files).length} 个文件 · ${issues.length} 个问题`);
     setMessages((m) => [...m, { role: "log", text: `写完　${summarize(files)}` }]);
     remember(data);
 
@@ -249,6 +281,7 @@ export default function App() {
     }
 
     fixRoundRef.current += 1;
+    note("fix", `第 ${fixRoundRef.current} 轮 · ${issues.length} 处`);
     setMessages((m) => [
       ...m,
       { role: "assistant", text: `检查查出 ${issues.length} 处问题：\n${list}` },
@@ -261,6 +294,7 @@ export default function App() {
     });
 
     setLoading(true);
+    armWatchdog();
     try {
       const res = await postJson("/api/turn", {
         messages: historyRef.current,
@@ -280,15 +314,21 @@ export default function App() {
         { role: "assistant", text: `想改但没改成：${String(e).replace(/^Error:\s*/, "")}` },
       ]);
     } finally {
+      disarmWatchdog();
       setLoading(false);
     }
   };
 
   const send = async (text: string) => {
     const value = text.trim();
-    if (!value || loading) return;
+    if (!value) return;
+    if (loading) {
+      note("send.blocked", "上一次还在等回复，这次忽略");
+      return;
+    }
 
     setStarted(true);
+    note("send", value.slice(0, 60));
     const revising = lesson !== null;
     if (!revising) {
       historyRef.current = [];
@@ -301,6 +341,7 @@ export default function App() {
     setQuestion("");
     setError(null);
     setLoading(true);
+    armWatchdog();
 
     if (revising) {
       // 还没播完就插话：先把剩下的步骤一次性应用完，避免把半截文件当上下文
@@ -315,9 +356,12 @@ export default function App() {
         files: revising ? playerRef.current!.files() : {},
       });
 
+      note("turn.ok", `action=${res.action}${res.lesson ? ` ops=${res.lesson.ops.length}` : ""}`);
+
       if (res.action === "reply") {
         historyRef.current.push({ role: "assistant", content: res.text });
         setMessages([...next, { role: "assistant", text: res.text }]);
+        window.setTimeout(() => composerRef.current?.focus(), 60);
       } else {
         const data: Lesson = { ...res.lesson, question: value };
         historyRef.current.push({ role: "assistant", content: `动手了：${data.title}` });
@@ -329,9 +373,11 @@ export default function App() {
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
+      note("turn.error", msg);
       setError(msg);
       setMessages([...next, { role: "assistant", text: msg }]);
     } finally {
+      disarmWatchdog();
       setLoading(false);
     }
   };
@@ -437,6 +483,7 @@ export default function App() {
   const composer = (
     <div className={`composer ${loading ? "busy" : ""}`}>
       <textarea
+        ref={composerRef}
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
         onKeyDown={(e) => {
@@ -561,6 +608,9 @@ export default function App() {
             <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
               导出代码
             </button>
+            <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
+              日志{logs.length > 0 ? ` ${logs.length}` : ""}
+            </button>
             <button className="ghost" onClick={reset}>清空</button>
           </>
         )}
@@ -663,6 +713,43 @@ export default function App() {
           <div className="chat-foot">{composer}</div>
         </aside>
       </main>
+
+      {traceOpen && (
+        <div className="trace">
+          <div className="trace-head">
+            <span>运行日志</span>
+            <button
+              className="trace-copy"
+              onClick={() => {
+                const text = logs
+                  .map((l) => `${new Date(l.t).toLocaleTimeString()}  ${l.tag}  ${l.text}`)
+                  .join("\n");
+                void navigator.clipboard.writeText(text);
+              }}
+            >
+              复制
+            </button>
+            <button className="trace-close" onClick={() => setTraceOpen(false)}>
+              ×
+            </button>
+          </div>
+          <div className="trace-body">
+            {logs.length === 0 ? (
+              <div className="trace-empty">还没有记录</div>
+            ) : (
+              logs.map((l, i) => (
+                <div key={i} className="trace-line">
+                  <span className="trace-time">
+                    {new Date(l.t).toLocaleTimeString("zh-CN", { hour12: false })}
+                  </span>
+                  <span className="trace-tag">{l.tag}</span>
+                  <span className="trace-text">{l.text}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

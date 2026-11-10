@@ -41,6 +41,9 @@ API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
 MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
+TRACE_DIR = ROOT / "logs"
+TRACE_FILE = TRACE_DIR / "trace.jsonl"
+
 MAX_FLOW = 4
 MAX_OPS = 14
 MAX_LINES = 200
@@ -52,6 +55,25 @@ class ExplainError(RuntimeError):
 
 def has_key() -> bool:
     return bool(API_KEY)
+
+
+def trace(event: str, **fields: Any) -> None:
+    """一行一条，能看懂发生了什么。出问题就翻 logs/trace.jsonl。"""
+    from datetime import datetime, timezone
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "event": event,
+        **fields,
+    }
+    line = json.dumps(record, ensure_ascii=False)
+    print("[trace] " + line, flush=True)
+    try:
+        TRACE_DIR.mkdir(exist_ok=True)
+        with TRACE_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
 
 
 SYSTEM = """你是一个很会讲代码的人，也是干活的。用户想弄懂一件事，或者让你改一点东西。
@@ -104,6 +126,9 @@ SYSTEM = """你是一个很会讲代码的人，也是干活的。用户想弄�
 - 追问上一段代码是什么意思（能用话讲清就别改代码）
 - 连做什么都没说清（比如只说了"帮我搞个东西"）
 
+如果你已经决定动手（比如回答"我这就拆"），就必须在同一轮里给出 ops，
+不要只说要做什么然后等用户再说一遍。
+
 注意：风格、配色、布局这类细节不要问，自己选一个合理的直接做。
 一次只问一个问题。
 
@@ -127,13 +152,21 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
         method="POST",
     )
+    import time
+
+    started = time.time()
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        trace("model.http_error", status=exc.code, ms=int((time.time() - started) * 1000))
         raise ExplainError(f"HTTP {exc.code}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        trace("model.network_error", error=str(exc), ms=int((time.time() - started) * 1000))
         raise ExplainError(f"网络错误: {exc}") from exc
+
+    trace("model.reply", ms=int((time.time() - started) * 1000),
+          chars=len(data["choices"][0].get("message", {}).get("content") or ""))
 
     content = (data["choices"][0].get("message") or {}).get("content") or ""
     if not content.strip():
@@ -283,18 +316,29 @@ def converse(
         msgs.append({"role": "system", "content": render_context(current)})
     msgs.extend(messages)
 
+    trace("turn.start", messages=len(messages), files={k: len(v) for k, v in current.items()})
+
     raw = _chat(msgs)
+    trace("turn.parsed", action=raw.get("action", "build"), ops=len(raw.get("ops") or []),
+          title=raw.get("title"))
+
     if str(raw.get("action", "build")) == "reply":
         said = str(raw.get("text") or "").strip()
         if not said:
             raise ExplainError("模型没说话")
+        trace("turn.reply", text=said[:80])
         return {"action": "reply", "text": said[:200]}
 
     ops = _ops(raw)
     if not ops:
+        trace("turn.no_ops", raw_kinds=[o.get("kind") for o in (raw.get("ops") or [])][:8])
         raise ExplainError("这一轮没有要做的改动")
 
+    trace("turn.ops", ops=[f"{o['kind']}:{o['path']}" for o in ops])
+
     state, problems = _apply(ops, current)
+    if problems:
+        trace("validate.problems", problems=[p["reason"] for p in problems])
 
     if problems:
         # 改的地方对不上原文：把问题交回去，只重试一次
@@ -317,6 +361,7 @@ def converse(
 
     if problems:
         # 还是对不上：退一步，整份重写受影响的文件（能做成就行，别卡住）
+        trace("fallback.rewrite", paths=sorted({p["path"] for p in problems}))
         bad = sorted({p["path"] for p in problems})
         print(f"[explain] 定位失败，改为整份重写: {bad}", flush=True)
         msgs.append({"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)})
@@ -338,7 +383,10 @@ def converse(
         if problems:
             raise ExplainError("要改的地方和原文对不上，换个说法我再试一次")
 
-    return {"action": "build", "lesson": _lesson(raw, state, ops)}
+    lesson = _lesson(raw, state, ops)
+    trace("turn.done", title=lesson["title"], files=len(lesson["files"]),
+          lines=lesson["lines"], ops=len(lesson["ops"]))
+    return {"action": "build", "lesson": lesson}
 
 
 def generate(question: str) -> dict[str, Any]:

@@ -170,6 +170,24 @@ open http://127.0.0.1:8790
 
 ---
 
+## 出问题了怎么查
+
+后端每条请求都写一行 JSON 到 `logs/trace.jsonl`：
+
+```json
+{"event":"turn.start","files":{"index.html":808}}
+{"event":"model.reply","ms":1044,"chars":96}
+{"event":"turn.parsed","action":"reply","ops":0}
+{"event":"validate.problems","problems":["第 1 个 edit 的 find 找不到"]}
+{"event":"fallback.rewrite","paths":["index.html"]}
+{"event":"turn.done","ops":3,"lines":105}
+```
+
+前端右上角有「日志 N」按钮（或 `?trace=1` 默认打开），记着每次发送、
+拿到什么动作、播了几个 op、检查出几处问题。可以一键复制。
+
+还有看门狗：等超过 75 秒会放开输入并提示，不会一直转圈。
+
 ## 结构
 
 ```
