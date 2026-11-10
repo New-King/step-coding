@@ -144,7 +144,9 @@ export default function App() {
   });
   const [picking, setPicking] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [viewFile, setViewFile] = useState<{ path: string; content: string } | null>(null);
+  const [tabs, setTabs] = useState<{ path: string; preview: boolean }[]>([]);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [contents, setContents] = useState<Record<string, string>>({});
 
   const codeRef = useRef<HTMLDivElement | null>(null);
   const taskRef = useRef("");
@@ -210,7 +212,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error();
       setWs(data);
-      if (wantFile) void selectFile(wantFile);
+      if (wantFile) void openFile(wantFile, true);
     } catch {
       localStorage.removeItem(WS_KEY);
       setWs(empty);
@@ -262,7 +264,7 @@ export default function App() {
     setPaths([]);
     taskRef.current = task;
     setShowPreview(false);
-    setViewFile(null);
+    setActiveTab(null);
     p.resetForTask();
     phaseRef.current = "planning";
 
@@ -377,28 +379,69 @@ export default function App() {
     localStorage.removeItem(WS_KEY);
     const res = await fetch("/api/workspace/close", { method: "POST" });
     setWs(await res.json());
-    setViewFile(null);
+    setTabs([]);
+    setActiveTab(null);
+    setContents({});
   };
 
-  const selectFile = async (path: string) => {
+  /** 单击 = 预览（会被下一次单击覆盖），双击 = 固定成标签页。 */
+  const openFile = async (path: string, preview: boolean) => {
+    setTabs((prev) => {
+      const exists = prev.find((t) => t.path === path);
+      if (exists) {
+        if (!preview && exists.preview) {
+          return prev.map((t) => (t.path === path ? { ...t, preview: false } : t));
+        }
+        return prev;
+      }
+      if (preview) {
+        const i = prev.findIndex((t) => t.preview);
+        if (i >= 0) {
+          const next = [...prev];
+          next[i] = { path, preview: true };
+          return next;
+        }
+      }
+      return [...prev, { path, preview }];
+    });
+    setActiveTab(path);
+
+    if (path in contents) return;
     try {
       const res = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "读不了");
-      setViewFile({ path, content: data.content });
+      setContents((prev) => ({ ...prev, [path]: data.content }));
     } catch (e) {
       setError(String(e).replace(/^Error:\s*/, ""));
     }
   };
 
-  const viewHtml = useMemo(() => {
-    if (!viewFile) return "";
-    try {
-      return hljs.highlight(viewFile.content, { language: langOf(viewFile.path) }).value;
-    } catch {
-      return viewFile.content;
+  const pinTab = (path: string) => {
+    setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, preview: false } : t)));
+    setActiveTab(path);
+  };
+
+  const closeTab = (path: string) => {
+    const i = tabs.findIndex((t) => t.path === path);
+    const next = tabs.filter((t) => t.path !== path);
+    setTabs(next);
+    if (activeTab === path) {
+      const fallback = next[Math.max(0, i - 1)] ?? next[0];
+      setActiveTab(fallback ? fallback.path : null);
     }
-  }, [viewFile]);
+  };
+
+  const activeHtml = useMemo(() => {
+    if (!activeTab) return "";
+    const body = contents[activeTab];
+    if (body === undefined) return "";
+    try {
+      return hljs.highlight(body, { language: langOf(activeTab) }).value;
+    } catch {
+      return body;
+    }
+  }, [activeTab, contents]);
 
   const toggle = () => {
     const p = playerRef.current!;
@@ -519,12 +562,15 @@ export default function App() {
                     <div
                       key={node.path}
                       className={`file ws ${node.type} ${node.type === "dir" ? "dir" : ""} ${
-                        viewFile?.path === node.path ? "active" : ""
+                        activeTab === node.path ? "active" : ""
                       } ${open ? "open" : ""}`}
                       style={{ paddingLeft: 6 + depth * 12 }}
                       onClick={() => {
                         if (node.type === "dir") toggleDir(node.path);
-                        else void selectFile(node.path);
+                        else void openFile(node.path, true);
+                      }}
+                      onDoubleClick={() => {
+                        if (node.type === "file") pinTab(node.path);
                       }}
                     >
                       {node.type === "dir" && <span className="twist">›</span>}
@@ -543,20 +589,43 @@ export default function App() {
 
         <section className="editor">
           <div className="tabs">
-            {viewFile ? (
-              <div className="tab active">{viewFile.path}</div>
-            ) : (
-              paths.map((path) => (
-                <div key={path} className={`tab ${active === path ? "active" : ""}`}>
-                  {path}
-                </div>
-              ))
-            )}
+            {tabs.length > 0
+              ? tabs.map((t) => (
+                  <div
+                    key={t.path}
+                    className={`tab ${activeTab === t.path ? "active" : ""} ${
+                      t.preview ? "preview" : ""
+                    }`}
+                    title={t.path}
+                    onClick={() => setActiveTab(t.path)}
+                    onDoubleClick={() => pinTab(t.path)}
+                  >
+                    <span className="tab-name">{t.path.split("/").pop()}</span>
+                    <button
+                      className="tab-x"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(t.path);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              : paths.map((path) => (
+                  <div key={path} className={`tab ${active === path ? "active" : ""}`}>
+                    {path}
+                  </div>
+                ))}
           </div>
           <div className="code" ref={codeRef}>
-            {viewFile ? (
-              <div className="code-inner" key={`v-${viewFile.path}`}>
-                <pre dangerouslySetInnerHTML={{ __html: viewHtml }} />
+            {activeTab ? (
+              <div className="code-inner" key={`v-${activeTab}`}>
+                {contents[activeTab] === undefined ? (
+                  <div className="placeholder">加载中…</div>
+                ) : (
+                  <pre dangerouslySetInnerHTML={{ __html: activeHtml }} />
+                )}
               </div>
             ) : text ? (
               <div className="code-inner" key={`l-${active}`}>
