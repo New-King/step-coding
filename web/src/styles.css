@@ -1668,3 +1668,33 @@ body {
   background: rgba(0, 0, 0, 0.08);
   color: #b3261e;
 }
+
+/* ---- 把结构感加回来：发丝边框 + 分隔线 ---- */
+.tree,
+.chat,
+.banner {
+  border: 1px solid var(--line);
+}
+
+.editor {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.wr-list {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.wr-item + .wr-item {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.wr-item {
+  border-radius: 0;
+}
+
+.wr-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}

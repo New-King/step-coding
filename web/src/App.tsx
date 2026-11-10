@@ -428,6 +428,7 @@ export default function App() {
           {recent.length > 0 && (
             <div className="welcome-recent">
               <div className="wr-title">最近打开</div>
+              <div className="wr-list">
               {recent.map((path) => (
                 <div key={path} className="wr-item" onClick={() => void openWorkspace(path)}>
                   <span className="wr-name">{path.split("/").filter(Boolean).pop()}</span>
@@ -444,6 +445,7 @@ export default function App() {
                   </button>
                 </div>
               ))}
+              </div>
             </div>
           )}
 
