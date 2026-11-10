@@ -30,7 +30,9 @@ type Lesson = {
   question?: string;
 };
 
-type Msg = { role: "user" | "assistant" | "log"; text: string };
+type Msg =
+  | { role: "user" | "assistant" | "log"; text: string }
+  | { role: "flow"; nodes: LessonNode[] };
 
 const EMPTY: Snapshot = {
   buffers: {},
@@ -292,9 +294,13 @@ export default function App() {
         setLesson(data);
         play(data);
         remember(data);
-        setMessages(
-          revising ? [...next, { role: "log", text: "按你说的重写一版" }] : next
-        );
+        const flowMsg: Msg[] =
+          data.flow.length >= 2 ? [{ role: "flow", nodes: data.flow }] : [];
+        setMessages([
+          ...next,
+          ...(revising ? [{ role: "log" as const, text: "按你说的重写一版" }] : []),
+          ...flowMsg,
+        ]);
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
@@ -341,11 +347,14 @@ export default function App() {
   }, [snap.banner]);
 
   const finished = snap.finished;
-  const totalSteps = lesson?.steps.length ?? 0;
-  const displayIndex = finished ? totalSteps : Math.max(stepIndex + 1, 0);
+  const running = Boolean(lesson) && snap.total > 0 && !finished;
   const displayLabel = finished ? "讲完了" : stepLabel;
   const focus =
     lesson && !finished && stepIndex >= 0 ? lesson.steps[stepIndex]?.focus ?? -1 : -1;
+  const lastFlowIndex = messages.reduce(
+    (acc, m, i) => (m.role === "flow" ? i : acc),
+    -1
+  );
 
   const highlighted = useMemo(() => {
     if (!code) return "";
@@ -535,56 +544,34 @@ export default function App() {
         </aside>
 
         <section className="pane">
-          {lesson ? (
-            <>
-              {lesson.flow.length >= 2 && (
-                <div className="flow-wrap">
-                  <div className="flow-caption">这几部分怎么串起来</div>
-                  <div className="flow">
-                    {lesson.flow.map((node, i) => (
-                      <div key={`${node.label}-${i}`} className="flow-item">
-                        {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
-                        <div className={`node ${focus === i ? "on" : ""}`}>
-                          <div className="node-label">{node.label}</div>
-                          <div className="node-desc">{node.desc}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+          <div className="code-card">
+            <div className="code-head">
+              <span className="code-path">{activeFile}</span>
+              <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
+            </div>
+            <div className="code">
+              {lesson ? (
+                code ? (
+                  <>
+                    <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
+                    <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+                  </>
+                ) : (
+                  <div className="code-empty">准备中…</div>
+                )
+              ) : (
+                <div className="code-empty stage-waiting">
+                  <span className="stage-dot" />
+                  <span>正在写…</span>
                 </div>
               )}
-
-              <div className="step-note">
-                <span className="note-index">
-                  {displayIndex}/{totalSteps}
-                </span>
-                <span className="note-text" key={displayLabel}>{displayLabel}</span>
-                {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
-              </div>
-
-              <div className="code-card">
-                <div className="code-head">
-                  <span className="code-path">{activeFile}</span>
-                  <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
-                </div>
-                <div className="code">
-                  {code ? (
-                    <>
-                      <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
-                      <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
-                    </>
-                  ) : (
-                    <div className="code-empty">准备中…</div>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="stage-empty">
-              <span className="stage-dot" />
-              <div className="stage-hint">正在写…</div>
             </div>
-          )}
+
+            <div className={`step-toast ${running ? "in" : ""}`}>
+              <span className="st-dot" />
+              <span className="st-text">{running ? displayLabel : "讲完了"}</span>
+            </div>
+          </div>
         </section>
 
         <aside className="chat">
@@ -617,11 +604,25 @@ export default function App() {
               </div>
             )}
 
-            {messages.map((m, i) => (
-              <div key={i} className={`bubble ${m.role}`}>
-                {m.text}
-              </div>
-            ))}
+            {messages.map((m, i) =>
+              m.role === "flow" ? (
+                <div className="flow-card" key={i}>
+                  {m.nodes.map((node, j) => (
+                    <div key={`${node.label}-${j}`} className="flow-step">
+                      {j > 0 && <div className="flow-link" />}
+                      <div className={`flow-node ${i === lastFlowIndex && focus === j ? "on" : ""}`}>
+                        <div className="flow-node-label">{node.label}</div>
+                        <div className="flow-node-desc">{node.desc}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div key={i} className={`bubble ${m.role}`}>
+                  {m.text}
+                </div>
+              )
+            )}
             {loading && <div className="bubble assistant typing">…</div>}
             {error && <div className="bubble error">{error}</div>}
           </div>
