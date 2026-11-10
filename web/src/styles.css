@@ -737,3 +737,9 @@ button {
 .primary:disabled:hover {
   background: var(--accent);
 }
+
+.history-empty {
+  padding: 6px;
+  font-size: 12px;
+  color: var(--faint);
+}

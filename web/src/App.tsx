@@ -300,10 +300,10 @@ export default function App() {
           </div>
         </div>
 
-        {history.length > 0 && (
-          <section className="ask-history">
-            <div className="history-title">
-              <span>最近讲过</span>
+        <section className="ask-history">
+          <div className="history-title">
+            <span>最近讲过</span>
+            {history.length > 0 && (
               <button
                 className="history-clear"
                 onClick={() => {
@@ -313,7 +313,11 @@ export default function App() {
               >
                 清空
               </button>
-            </div>
+            )}
+          </div>
+          {history.length === 0 ? (
+            <div className="history-empty">还没有。上面问一句，记录会留在这里。</div>
+          ) : (
             <div className="history-list">
               {history.map((item) => (
                 <button
@@ -328,8 +332,8 @@ export default function App() {
                 </button>
               ))}
             </div>
-          </section>
-        )}
+          )}
+        </section>
       </div>
     );
   }

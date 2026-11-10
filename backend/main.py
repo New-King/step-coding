@@ -47,4 +47,9 @@ if WEB_DIST.exists():
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(WEB_DIST / "index.html")
+        # 前端每次构建都会换 hash 文件名，但 index.html 本身必须每次重取，
+        # 否则用户刷新后还在跑旧 bundle。
+        return FileResponse(
+            WEB_DIST / "index.html",
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
