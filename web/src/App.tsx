@@ -585,8 +585,14 @@ export default function App() {
               )}
             </div>
 
-            <div className={`step-toast ${running ? "in" : ""}`}>
-              <span className="st-bar" />
+            <div
+              className={`step-toast ${running ? "in" : ""} ${ghostLabel ? "changing" : ""}`}
+            >
+              <span className="st-tile">
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path d="M4 12h13M11 6l6 6-6 6" />
+                </svg>
+              </span>
               <div className="st-stack">
                 {ghostLabel && (
                   <span className="st-ghost" key={`ghost-${ghostLabel}`}>
