@@ -906,3 +906,103 @@ button {
   max-height: 58vh;
   padding-top: 0;
 }
+
+/* ---- 讲解页：右侧对话面板 ---- */
+.workspace {
+  grid-template-columns: 190px minmax(0, 1fr) 306px;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.chat-head {
+  flex: 0 0 auto;
+  padding: 11px 14px;
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  padding-top: 12px;
+  max-height: none;
+}
+
+.chat-empty {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--faint);
+}
+
+.chat .bubble {
+  max-width: 92%;
+  font-size: 12.5px;
+  padding: 8px 11px;
+  border-radius: 12px;
+}
+
+.chat .bubble.meta {
+  align-self: center;
+  max-width: 100%;
+  background: none;
+  border: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  padding: 2px 0;
+  text-align: center;
+}
+
+.chat .bubble.error {
+  align-self: stretch;
+  background: #fdf0ef;
+  border: 1px solid #f3d6d3;
+  color: #b3261e;
+}
+
+.chat-foot {
+  flex: 0 0 auto;
+  padding: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.chat-foot .composer {
+  padding: 5px 5px 5px 12px;
+  border-radius: 14px;
+  background: #fafafa;
+  box-shadow: none;
+}
+
+.chat-foot .composer textarea {
+  font-size: 12.5px;
+  max-height: 88px;
+}
+
+.chat-foot .composer-send {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 150px minmax(0, 1fr) 260px;
+  }
+}

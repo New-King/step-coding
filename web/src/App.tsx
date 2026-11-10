@@ -29,7 +29,7 @@ type Lesson = {
   question?: string;
 };
 
-type Msg = { role: "user" | "assistant"; text: string };
+type Msg = { role: "user" | "assistant" | "meta"; text: string };
 
 const EMPTY: Snapshot = {
   buffers: {},
@@ -79,7 +79,6 @@ export default function App() {
 
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [reply, setReply] = useState<string | null>(null);
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [history, setHistory] = useState<Lesson[]>(() => {
     try {
@@ -158,10 +157,10 @@ export default function App() {
     const value = text.trim();
     if (!value || loading) return;
 
+    const revising = lesson !== null;
     const next: Msg[] = [...messages, { role: "user", text: value }];
     setMessages(next);
     setQuestion("");
-    setReply(null);
     setError(null);
     setLoading(true);
 
@@ -179,12 +178,16 @@ export default function App() {
 
       if (res.action === "reply") {
         setMessages([...next, { role: "assistant", text: res.text }]);
-        setReply(res.text);
       } else {
         const data: Lesson = { ...res.lesson, question: value };
         setLesson(data);
         play(data);
         remember(data);
+        setMessages(
+          revising
+            ? [...next, { role: "meta", text: `重写了一版，${data.lines} 行` }]
+            : next
+        );
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
@@ -200,7 +203,6 @@ export default function App() {
     setLesson(null);
     setSnap(EMPTY);
     setMessages([]);
-    setReply(null);
     setError(null);
     setPaused(false);
   };
@@ -480,13 +482,24 @@ export default function App() {
             </div>
           </div>
         </section>
-      </main>
 
-      <footer className="talk">
-        {reply && <div className="talk-reply">{reply}</div>}
-        {error && <div className="talk-error">{error}</div>}
-        {composer}
-      </footer>
+        <aside className="chat">
+          <div className="chat-head">对话</div>
+          <div className="chat-log">
+            {messages.length === 0 && (
+              <div className="chat-empty">说哪里不对，或者问这是什么意思。</div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`bubble ${m.role}`}>
+                {m.text}
+              </div>
+            ))}
+            {loading && <div className="bubble assistant typing">…</div>}
+            {error && <div className="bubble error">{error}</div>}
+          </div>
+          <div className="chat-foot">{composer}</div>
+        </aside>
+      </main>
     </div>
   );
 }
