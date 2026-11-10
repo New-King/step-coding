@@ -6,6 +6,7 @@ import xml from "highlight.js/lib/languages/xml";
 import python from "highlight.js/lib/languages/python";
 import go from "highlight.js/lib/languages/go";
 import { Player, type Snapshot, type Step } from "./player";
+import { downloadZip } from "./zip";
 
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("css", css);
@@ -25,6 +26,7 @@ type Lesson = {
   steps: LessonStep[];
   lines: number;
   tooLong: boolean;
+  question?: string;
 };
 
 const EMPTY: Snapshot = {
@@ -44,6 +46,8 @@ const EXAMPLES = [
   "帮我写一个登录页面",
   "Docker 的镜像分层是怎么回事",
 ];
+
+const HISTORY_KEY = "stepcoding.history";
 
 function langOf(name: string) {
   const key = name.toLowerCase();
@@ -73,6 +77,13 @@ export default function App() {
 
   const [question, setQuestion] = useState("");
   const [lesson, setLesson] = useState<Lesson | null>(null);
+  const [history, setHistory] = useState<Lesson[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +97,7 @@ export default function App() {
 
   useEffect(() => {
     const p = playerRef.current!;
-    p.cps = 60;
+    p.cps = cps;
     p.onUpdate = setSnap;
     p.onExhausted = () => {};
 
@@ -96,6 +107,18 @@ export default function App() {
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const remember = (data: Lesson) => {
+    setHistory((prev) => {
+      const next = [data, ...prev.filter((x) => x.title !== data.title)].slice(0, 6);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下就算了 */
+      }
+      return next;
+    });
+  };
 
   const play = (data: Lesson) => {
     const p = playerRef.current!;
@@ -126,22 +149,34 @@ export default function App() {
     });
   };
 
+  const open = (data: Lesson) => {
+    setLesson(data);
+    play(data);
+  };
+
   const ask = async (text: string) => {
     const value = text.trim();
     if (!value || loading) return;
     setLoading(true);
     setError(null);
-    setLesson(null);
     playerRef.current!.stop();
     try {
       const data: Lesson = await postJson("/api/explain", { question: value });
-      setLesson(data);
-      play(data);
+      const withQuestion = { ...data, question: value };
+      setLesson(withQuestion);
+      play(withQuestion);
+      remember(withQuestion);
     } catch (e) {
       setError(String(e).replace(/^Error:\s*/, ""));
     } finally {
       setLoading(false);
     }
+  };
+
+  const backToAsk = () => {
+    playerRef.current!.stop();
+    setLesson(null);
+    setSnap(EMPTY);
   };
 
   const replay = () => lesson && play(lesson);
@@ -195,6 +230,16 @@ export default function App() {
     }
   };
 
+  const exportZip = () => {
+    if (!lesson) return;
+    const entries = lesson.files.map((f) => ({
+      path: f.path,
+      content: snap.buffers[f.path] ?? "",
+    }));
+    const safe = (lesson.title || "step-coding").replace(/[/\\:*?"<>|]/g, "-");
+    downloadZip(`${safe}.zip`, entries);
+  };
+
   /* ---------------------------------------------------------------- 提问页 */
 
   if (!lesson) {
@@ -229,6 +274,31 @@ export default function App() {
             ))}
           </div>
 
+          {history.length > 0 && (
+            <div className="ask-history">
+              <div className="history-title">
+                最近讲过
+                <button
+                  className="history-clear"
+                  onClick={() => {
+                    localStorage.removeItem(HISTORY_KEY);
+                    setHistory([]);
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+              {history.map((item) => (
+                <div key={item.title + (item.question ?? "")} className="history-item" onClick={() => open(item)}>
+                  <span className="hi-title">{item.title}</span>
+                  <span className="hi-meta">
+                    {item.files.length} 个文件 · {item.lines} 行
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {error && <div className="ask-error">{error}</div>}
         </div>
       </div>
@@ -249,70 +319,87 @@ export default function App() {
 
         <label className="speed">
           速度
-          <input type="range" min={20} max={160} value={cps} onChange={(e) => {
-            const v = Number(e.target.value);
-            setCps(v);
-            playerRef.current!.cps = v;
-          }} />
+          <input
+            type="range"
+            min={20}
+            max={160}
+            value={cps}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setCps(v);
+              playerRef.current!.cps = v;
+            }}
+          />
           <b>{cps}</b>
         </label>
         <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
         <button className="ghost" onClick={replay}>重播</button>
-        <button className="primary" onClick={copy}>{copied ? "已复制" : "复制代码"}</button>
-        <button className="ghost" onClick={() => { setLesson(null); playerRef.current!.stop(); }}>
-          换个问题
-        </button>
+        <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
+        <button className="primary" onClick={exportZip}>导出代码</button>
+        <button className="ghost" onClick={backToAsk}>换个问题</button>
       </header>
 
-      {lesson.flow.length >= 2 && (
-      <div className="flow-wrap">
-        <div className="flow">
-          {lesson.flow.map((node, i) => (
-            <div key={`${node.label}-${i}`} className="flow-item">
-              {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
-              <div className={`node ${focus === i ? "on" : ""}`}>
-                <div className="node-label">{node.label}</div>
-                <div className="node-desc">{node.desc}</div>
+      <main className="workspace">
+        <aside className="files">
+          <div className="files-title">
+            文件
+            <span>{lesson.files.length}</span>
+          </div>
+          {lesson.files.map((f) => (
+            <button
+              key={f.path}
+              className={`file ${activeFile === f.path ? "on" : ""}`}
+              title={f.path}
+              onClick={() => setPeek(f.path)}
+            >
+              {f.path}
+            </button>
+          ))}
+          <div className="files-foot">{lesson.lines} 行</div>
+        </aside>
+
+        <section className="pane">
+          {lesson.flow.length >= 2 && (
+            <div className="flow-wrap">
+              <div className="flow">
+                {lesson.flow.map((node, i) => (
+                  <div key={`${node.label}-${i}`} className="flow-item">
+                    {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
+                    <div className={`node ${focus === i ? "on" : ""}`}>
+                      <div className="node-label">{node.label}</div>
+                      <div className="node-desc">{node.desc}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-      )}
+          )}
 
-      <main className="stage">
-        <div className="step-note">
-          <span className="note-index">
-            {displayIndex}/{totalSteps}
-          </span>
-          <span className="note-text" key={displayLabel}>{displayLabel}</span>
-          {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
-        </div>
+          <div className="step-note">
+            <span className="note-index">
+              {displayIndex}/{totalSteps}
+            </span>
+            <span className="note-text" key={displayLabel}>{displayLabel}</span>
+            {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
+          </div>
 
-        <div className="code-card">
-          <div className="code-head">
-            {fileList.map((f) => (
-              <button
-                key={f.path}
-                className={`code-tab ${activeFile === f.path ? "on" : ""}`}
-                onClick={() => setPeek(f.path)}
-              >
-                {f.path}
-              </button>
-            ))}
-            <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
+          <div className="code-card">
+            <div className="code-head">
+              <span className="code-path">{activeFile}</span>
+              <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
+            </div>
+            <div className="code">
+              {code ? (
+                <>
+                  <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+                </>
+              ) : (
+                <div className="code-empty">准备中…</div>
+              )}
+            </div>
           </div>
-          <div className="code">
-            {code ? (
-              <>
-                <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
-                <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
-              </>
-            ) : (
-              <div className="code-empty">准备中…</div>
-            )}
-          </div>
-        </div>
+        </section>
       </main>
     </div>
   );
