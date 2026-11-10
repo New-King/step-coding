@@ -769,7 +769,9 @@ button {
   --ink: #1d1d1f;
   --ink-2: #3a3a3c;
   --muted: #86868b;
+  --ink-faint: #86868b;
   --accent: #171717;
+  --accent-hover: #404040;
   --accent-dim: #e9e9ee;
 
   --code-bg: #1d1d1f;
@@ -1480,7 +1482,7 @@ body {
 }
 
 .welcome-open:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--accent-hover, #404040);
 }
 
 .welcome-open:active:not(:disabled) {
@@ -1501,7 +1503,7 @@ body {
   font-size: 10.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-faint, #86868b);
   padding: 0 2px 8px;
 }
 
@@ -1532,7 +1534,7 @@ body {
 
 .wr-path {
   font-size: 11px;
-  color: var(--ink-faint);
+  color: var(--ink-faint, #86868b);
   flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
