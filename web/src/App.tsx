@@ -41,8 +41,8 @@ const EMPTY: Snapshot = {
 const EXAMPLES = [
   "React 的 useEffect 到底什么时候执行",
   "后端的中间件是怎么串起来的",
-  "数据库事务是怎么保证不出错的",
-  "前端路由是怎么拦截未登录用户的",
+  "帮我写一个登录页面",
+  "Docker 的镜像分层是怎么回事",
 ];
 
 function langOf(name: string) {
@@ -202,8 +202,8 @@ export default function App() {
       <div className="ask">
         <div className="ask-inner">
           <div className="ask-mark" />
-          <h1>哪个环节没看懂？</h1>
-          <p>说一个点，它用一个最小例子边写边讲给你看。</p>
+          <h1>想弄懂什么？</h1>
+          <p>说一句。它用最小的例子边写边讲——概念、流程、或者一个界面都行。</p>
 
           <textarea
             className="ask-input"
@@ -212,7 +212,7 @@ export default function App() {
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void ask(question);
             }}
-            placeholder="比如：useEffect 到底什么时候执行？"
+            placeholder="比如：useEffect 什么时候执行，或者写个登录页"
             rows={2}
             autoFocus
           />
