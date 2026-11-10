@@ -306,7 +306,7 @@ export default function App() {
 
         <section className="ask-history">
           <div className="history-title">
-            <span>最近讲过</span>
+            <span>最近</span>
             {history.length > 0 && (
               <button
                 className="history-clear"
