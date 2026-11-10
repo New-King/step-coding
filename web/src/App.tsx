@@ -261,26 +261,6 @@ export default function App() {
             <h1>想弄懂什么？</h1>
             <p>说一句。它用最小的例子边写边讲——概念、流程、或者一个界面都行。</p>
 
-            <textarea
-              className="ask-input"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void ask(question);
-              }}
-              placeholder="比如：useEffect 什么时候执行，或者写个登录页"
-              rows={2}
-              autoFocus
-            />
-
-            <button
-              className="ask-btn"
-              onClick={() => void ask(question)}
-              disabled={loading || !question.trim()}
-            >
-              {loading ? "正在想例子…" : "讲给我看"}
-            </button>
-
             <div className="ask-examples">
               {EXAMPLES.map((item) => (
                 <button
@@ -294,6 +274,30 @@ export default function App() {
                   {item}
                 </button>
               ))}
+            </div>
+
+            <div className="composer">
+              <textarea
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void ask(question);
+                  }
+                }}
+                placeholder="比如：useEffect 什么时候执行，或者写个登录页"
+                rows={1}
+                autoFocus
+              />
+              <button
+                className="composer-send"
+                onClick={() => void ask(question)}
+                disabled={loading || !question.trim()}
+                title="发送"
+              >
+                {loading ? "…" : "→"}
+              </button>
             </div>
 
             {error && <div className="ask-error">{error}</div>}
