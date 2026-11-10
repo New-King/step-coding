@@ -42,11 +42,11 @@ const EMPTY: Snapshot = {
   finished: false,
 };
 
-const EXAMPLES = [
-  "React 的 useEffect 到底什么时候执行",
-  "后端的中间件是怎么串起来的",
-  "帮我写一个登录页面",
-  "Docker 的镜像分层是怎么回事",
+const EXAMPLES: { label: string; ask: string }[] = [
+  { label: "useEffect 执行时机", ask: "React 的 useEffect 到底什么时候执行" },
+  { label: "中间件怎么串起来", ask: "后端的中间件是怎么串起来的" },
+  { label: "写一个登录页", ask: "帮我写一个登录页面" },
+  { label: "镜像分层怎么回事", ask: "Docker 的镜像分层是怎么回事" },
 ];
 
 const HISTORY_KEY = "stepcoding.history";
@@ -183,11 +183,13 @@ export default function App() {
         setLesson(data);
         play(data);
         remember(data);
-        setMessages(
-          revising
-            ? [...next, { role: "meta", text: `重写了一版，${data.lines} 行` }]
-            : next
-        );
+        setMessages([
+          ...next,
+          {
+            role: "assistant",
+            text: revising ? `改好了。${data.summary}` : data.summary || "写好了。",
+          },
+        ]);
       }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
@@ -285,7 +287,7 @@ export default function App() {
             void send(question);
           }
         }}
-        placeholder={lesson ? "说哪里不对，或者问这是什么意思" : "比如：useEffect 什么时候执行，或者写个登录页"}
+        placeholder={lesson ? "说哪里不对，或者问这是什么意思" : "说一句…"}
         rows={1}
         autoFocus
       />
@@ -300,195 +302,162 @@ export default function App() {
     </div>
   );
 
-  /* ---------------------------------------------------------------- 首页 */
-
-  if (!lesson) {
-    const talking = messages.length > 0;
-    return (
-      <div className="ask">
-        <div className={`ask-hero ${talking ? "talking" : ""}`}>
-          <div className="ask-inner">
-            {!talking && (
-              <>
-                <div className="ask-mark" />
-                <h1>想弄懂什么？</h1>
-                <p>说一句，它写个最小的例子给你看。</p>
-              </>
-            )}
-
-            {talking && (
-              <div className="chat-log">
-                {messages.map((m, i) => (
-                  <div key={i} className={`bubble ${m.role}`}>
-                    {m.text}
-                  </div>
-                ))}
-                {loading && <div className="bubble assistant typing">…</div>}
-              </div>
-            )}
-
-            {!talking && (
-              <div className="ask-examples">
-                {EXAMPLES.map((item) => (
-                  <button
-                    key={item}
-                    className="ask-chip"
-                    onClick={() => void send(item)}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {composer}
-
-            {error && !talking && <div className="ask-error">{error}</div>}
-          </div>
-        </div>
-
-        {!talking && history.length > 0 && (
-          <section className="ask-history">
-            <div className="history-title">
-              <span>最近</span>
-              <button
-                className="history-clear"
-                onClick={() => {
-                  localStorage.removeItem(HISTORY_KEY);
-                  setHistory([]);
-                }}
-              >
-                清空
-              </button>
-            </div>
-            <div className="history-list">
-              {history.map((item) => (
-                <button
-                  key={item.title + (item.question ?? "")}
-                  className="history-item"
-                  onClick={() => {
-                    setMessages([{ role: "user", text: item.question ?? item.title }]);
-                    setLesson(item);
-                    play(item);
-                  }}
-                >
-                  <span className="hi-title">{item.title}</span>
-                  <span className="hi-meta">
-                    {item.files.length} 个文件 · {item.lines} 行
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
-    );
-  }
-
-  /* ---------------------------------------------------------------- 讲解页 */
+  const branding = lesson?.title ?? "Step Coding";
+  const subtitle = lesson?.summary ?? "说一句，它写个最小的例子给你看。";
 
   return (
     <div className="app">
       <header className="bar">
         <div className="brand">
           <span className="logo" />
-          <span className="name">{lesson.title}</span>
+          <span className="name">{branding}</span>
         </div>
-        <div className="task">{lesson.summary}</div>
+        <div className="task">{subtitle}</div>
         <div className="spacer" />
 
-        <label className="speed">
-          速度
-          <input
-            type="range"
-            min={20}
-            max={160}
-            value={cps}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setCps(v);
-              playerRef.current!.cps = v;
-            }}
-          />
-          <b>{cps}</b>
-        </label>
-        <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
-        <button className="ghost" onClick={replay}>重播</button>
-        <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
-        <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
-          导出代码
-        </button>
-        <button className="ghost" onClick={reset}>换个问题</button>
+        {lesson && (
+          <>
+            <label className="speed">
+              速度
+              <input
+                type="range"
+                min={20}
+                max={160}
+                value={cps}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setCps(v);
+                  playerRef.current!.cps = v;
+                }}
+              />
+              <b>{cps}</b>
+            </label>
+            <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
+            <button className="ghost" onClick={replay}>重播</button>
+            <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
+            <button className="primary" onClick={exportZip} disabled={!hasContent} title="暂停时也可以导出">
+              导出代码
+            </button>
+            <button className="ghost" onClick={reset}>清空</button>
+          </>
+        )}
       </header>
 
       <main className="workspace">
         <aside className="files">
           <div className="files-title">
             文件
-            <span>{lesson.files.length}</span>
+            <span>{lesson ? lesson.files.length : 0}</span>
           </div>
-          {lesson.files.map((f) => (
-            <button
-              key={f.path}
-              className={`file ${activeFile === f.path ? "on" : ""}`}
-              title={f.path}
-              onClick={() => setPeek(f.path)}
-            >
-              {f.path}
-            </button>
-          ))}
-          <div className="files-foot">{lesson.lines} 行</div>
+          {lesson ? (
+            lesson.files.map((f) => (
+              <button
+                key={f.path}
+                className={`file ${activeFile === f.path ? "on" : ""}`}
+                title={f.path}
+                onClick={() => setPeek(f.path)}
+              >
+                {f.path}
+              </button>
+            ))
+          ) : (
+            <div className="files-none">还没有文件</div>
+          )}
+          <div className="files-foot">{lesson ? `${lesson.lines} 行` : "—"}</div>
         </aside>
 
         <section className="pane">
-          {lesson.flow.length >= 2 && (
-            <div className="flow-wrap">
-              <div className="flow">
-                {lesson.flow.map((node, i) => (
-                  <div key={`${node.label}-${i}`} className="flow-item">
-                    {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
-                    <div className={`node ${focus === i ? "on" : ""}`}>
-                      <div className="node-label">{node.label}</div>
-                      <div className="node-desc">{node.desc}</div>
-                    </div>
+          {lesson ? (
+            <>
+              {lesson.flow.length >= 2 && (
+                <div className="flow-wrap">
+                  <div className="flow">
+                    {lesson.flow.map((node, i) => (
+                      <div key={`${node.label}-${i}`} className="flow-item">
+                        {i > 0 && <span className={`arrow ${focus === i ? "on" : ""}`}>→</span>}
+                        <div className={`node ${focus === i ? "on" : ""}`}>
+                          <div className="node-label">{node.label}</div>
+                          <div className="node-desc">{node.desc}</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+              )}
+
+              <div className="step-note">
+                <span className="note-index">
+                  {displayIndex}/{totalSteps}
+                </span>
+                <span className="note-text" key={displayLabel}>{displayLabel}</span>
+                {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
               </div>
+
+              <div className="code-card">
+                <div className="code-head">
+                  <span className="code-path">{activeFile}</span>
+                  <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
+                </div>
+                <div className="code">
+                  {code ? (
+                    <>
+                      <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
+                      <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+                    </>
+                  ) : (
+                    <div className="code-empty">准备中…</div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="stage-empty">
+              <div className="stage-mark" />
+              <div className="stage-title">还没有文件</div>
+              <div className="stage-hint">在右边说一句，它写的东西会出现在这里。</div>
             </div>
           )}
-
-          <div className="step-note">
-            <span className="note-index">
-              {displayIndex}/{totalSteps}
-            </span>
-            <span className="note-text" key={displayLabel}>{displayLabel}</span>
-            {lesson.tooLong && <span className="note-warn">例子偏长（{lesson.lines} 行）</span>}
-          </div>
-
-          <div className="code-card">
-            <div className="code-head">
-              <span className="code-path">{activeFile}</span>
-              <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
-            </div>
-            <div className="code">
-              {code ? (
-                <>
-                  <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
-                  <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
-                </>
-              ) : (
-                <div className="code-empty">准备中…</div>
-              )}
-            </div>
-          </div>
         </section>
 
         <aside className="chat">
           <div className="chat-head">对话</div>
           <div className="chat-log">
             {messages.length === 0 && (
-              <div className="chat-empty">说哪里不对，或者问这是什么意思。</div>
+              <div className="chat-intro">
+                <div className="chat-intro-text">想弄懂什么？</div>
+                <div className="chat-intro-sub">概念、流程，或者一个界面，都行。</div>
+                <div className="chat-chips">
+                  {EXAMPLES.map((item) => (
+                    <button key={item.ask} className="ask-chip" onClick={() => void send(item.ask)}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                {history.length > 0 && (
+                  <>
+                    <div className="chat-intro-sub recent">最近</div>
+                    {history.map((item) => (
+                      <button
+                        key={item.title + (item.question ?? "")}
+                        className="history-item"
+                        onClick={() => {
+                          setMessages([
+                            { role: "user", text: item.question ?? item.title },
+                            { role: "assistant", text: item.summary },
+                          ]);
+                          setLesson(item);
+                          play(item);
+                        }}
+                      >
+                        <span className="hi-title">{item.title}</span>
+                        <span className="hi-meta">{item.lines} 行</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
             )}
+
             {messages.map((m, i) => (
               <div key={i} className={`bubble ${m.role}`}>
                 {m.text}
