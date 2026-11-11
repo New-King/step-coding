@@ -24,7 +24,7 @@ type Event =
       results?: { title: string; url: string; snippet: string; site?: string }[];
     }
   | { action: "plan"; steps: string[] }
-  | { action: "ask"; question: string; options: string[] }
+  | { action: "ask"; questions: { question: string; options: string[] }[] }
   | { action: "write"; path: string; lang: string; label: string; code: string }
   | { action: "edit"; path: string; label: string; find: string; replace: string }
   | { action: "delete"; path: string; label: string }
@@ -109,7 +109,9 @@ export default function App() {
   });
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
   const [running, setRunning] = useState(false);
-  const [asking, setAsking] = useState<Extract<Event, { action: "ask" }> | null>(null);
+  const [pending, setPending] = useState<{ question: string; options: string[] }[] | null>(null);
+  const [askIndex, setAskIndex] = useState(0);
+  const [askAnswers, setAskAnswers] = useState<string[]>([]);
   const [declined, setDeclined] = useState<Extract<Event, { action: "decline" }> | null>(null);
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -183,7 +185,7 @@ export default function App() {
     playerRef.current!.stop();
     setStarted(true);
     setError(null);
-    setAsking(null);
+    setPending(null);
     setDeclined(null);
     setItems([]);
     itemsRef.current = [];
@@ -266,7 +268,9 @@ export default function App() {
     if (ev.action === "ask") {
       push(ev);
       if (Object.keys(filesRef.current).length > 0) remember(filesRef.current);
-      setAsking(ev);
+      setPending(ev.questions);
+      setAskIndex(0);
+      setAskAnswers([]);
       waitingRef.current = true;
       setRunning(false);
       runningRef.current = false;
@@ -295,7 +299,7 @@ export default function App() {
 
     if (ev.action === "decline") {
       stopRun();
-      setAsking(null);
+      setPending(null);
       // 一律留在当前界面，把话说清楚，不要把人弹到一个看不见的地方
       push(ev);
       setDeclined(ev);
@@ -389,6 +393,7 @@ export default function App() {
         ? firstUser.ev.text.slice(0, 26)
         : "最近一次";
     const item: HistoryItem = {
+      id: "",
       title,
       summary: summarize(files),
       items: itemsRef.current,
@@ -425,14 +430,29 @@ export default function App() {
 
   const answerAsk = async (value: string) => {
     const text = value.trim();
-    if (!text || !asking) return;
-    push({ action: "user", text } as Event);
-    messagesRef.current = [
-      ...messagesRef.current,
-      { role: "user", content: text },
-    ];
-    setAsking(null);
+    if (!text || !pending) return;
+
+    const next = [...askAnswers, text];
     setAnswer("");
+
+    if (askIndex + 1 < pending.length) {
+      setAskAnswers(next);
+      setAskIndex(askIndex + 1);
+      window.setTimeout(() => composerRef.current?.focus(), 40);
+      return;
+    }
+
+    // 问题问完了：一题就直接用答案，多题整理成清单再发
+    const payload =
+      pending.length === 1
+        ? text
+        : pending.map((q, i) => `${q.question} → ${next[i]}`).join("\n");
+
+    push({ action: "user", text: payload } as Event);
+    messagesRef.current = [...messagesRef.current, { role: "user", content: payload }];
+    setPending(null);
+    setAskAnswers([]);
+    setAskIndex(0);
     waitingRef.current = false;
     setRunning(true);
     runningRef.current = true;
@@ -444,7 +464,7 @@ export default function App() {
     if (!value) return;
     setQuestion("");
 
-    if (asking) {
+    if (pending) {
       await answerAsk(value);
       return;
     }
@@ -481,7 +501,7 @@ export default function App() {
     setSnap(EMPTY);
     setItems([]);
     itemsRef.current = [];
-    setAsking(null);
+    setPending(null);
     setError(null);
     filesRef.current = {};
     messagesRef.current = [];
@@ -499,7 +519,6 @@ export default function App() {
     const steps: Step[] = [];
     for (const item of itemsRef.current) {
       const ev = item.ev;
-      if (ev.action === "write" && ev.kind) continue;
       if (ev.action === "write") {
         steps.push({ type: "create", path: ev.path, code: ev.code, banner: ev.label, delay: 120 });
       } else if (ev.action === "edit") {
@@ -573,7 +592,7 @@ export default function App() {
   useEffect(() => {
     const el = logRef.current;
     if (el && logStickRef.current) el.scrollTop = el.scrollHeight;
-  }, [items, asking]);
+  }, [items, pending]);
 
   // 代码区：一边写一边往下跟，同样尊重手动滚动
   useEffect(() => {
@@ -732,8 +751,8 @@ export default function App() {
         <div className="brand">
           <span className="logo" />
           <span className="name">{projectTitle}</span>
-          <span className={`status ${running ? "busy" : asking ? "wait" : "done"}`}>
-            {running ? "进行中" : asking ? "等你决定" : "已完成"}
+          <span className={`status ${running ? "busy" : pending ? "wait" : "done"}`}>
+            {running ? "进行中" : pending ? "等你回答" : "已完成"}
           </span>
         </div>
         <div className="spacer" />
@@ -840,20 +859,51 @@ export default function App() {
               <TimelineItem
                 key={item.id}
                 item={item}
-                live={item.ev.action === "ask" && asking === item.ev}
+                live={item.ev.action === "ask" && pending === item.ev.questions}
               />
             ))}
 
-            {asking && (
+            {pending && (
               <div className="ask-card">
-                <div className="ask-q">{asking.question}</div>
-                <div className="ask-opts">
-                  {asking.options.map((opt) => (
-                    <button key={opt} className="ask-opt" onClick={() => void answerAsk(opt)}>
-                      {opt}
-                    </button>
-                  ))}
-                </div>
+                {pending.length > 1 && (
+                  <div className="ask-progress">
+                    <span>
+                      问题 {askIndex + 1}/{pending.length}
+                    </span>
+                    <span className="ask-dots">
+                      {pending.map((_, i) => (
+                        <i
+                          key={i}
+                          className={i === askIndex ? "on" : i < askIndex ? "done" : ""}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
+
+                {askAnswers.length > 0 && (
+                  <div className="ask-answered">
+                    {pending.slice(0, askAnswers.length).map((q, i) => (
+                      <div key={i} className="ask-answered-line">
+                        <span className="aa-q">{q.question}</span>
+                        <span className="aa-a">{askAnswers[i]}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="ask-q">{pending[askIndex].question}</div>
+
+                {pending[askIndex].options.length > 0 && (
+                  <div className="ask-opts">
+                    {pending[askIndex].options.map((opt) => (
+                      <button key={opt} className="ask-opt" onClick={() => void answerAsk(opt)}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="ask-input-row">
                   <input
                     value={answer}
@@ -870,9 +920,11 @@ export default function App() {
               </div>
             )}
 
-            {running && !asking && <div className="bubble assistant typing">…</div>}
+            {running && !pending && <div className="bubble assistant typing">…</div>}
           </div>
-          <div className="chat-foot">{composer(asking ? "回答上面的问题，或直接写…" : "可以随时插话")}</div>
+          <div className="chat-foot">
+        {composer(pending ? "回答上面的问题，或直接写…" : "可以随时插话")}
+      </div>
         </aside>
       </main>
 
@@ -1009,8 +1061,12 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
     if (live) return null;
     return (
       <div className="tl ask-done">
-        <div>{ev.question}</div>
-        {ev.options.length > 0 && <div className="ask-done-opts">{ev.options.join(" · ")}</div>}
+        {ev.questions.map((q, i) => (
+          <div key={i} className="ask-done-q">
+            {q.question}
+            {q.options.length > 0 && <div className="ask-done-opts">{q.options.join(" · ")}</div>}
+          </div>
+        ))}
       </div>
     );
   }

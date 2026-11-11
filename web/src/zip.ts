@@ -96,7 +96,7 @@ export function makeZip(entries: ZipEntry[]): Blob {
   ev.setUint32(16, offset, true);
   ev.setUint16(20, 0, true);
 
-  return new Blob([...parts, ...central, end], { type: "application/zip" });
+  return new Blob([...parts, ...central, end] as BlobPart[], { type: "application/zip" });
 }
 
 export function downloadZip(filename: string, entries: ZipEntry[]) {

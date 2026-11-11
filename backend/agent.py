@@ -67,7 +67,10 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 {"action":"look","path":"目录或文件，空字符串表示项目根"}
 {"action":"search","query":"要搜什么，一句话"}
 {"action":"plan","steps":["做哪几步，每步 10 字以内"]}
-{"action":"ask","question":"需要用户决定的事","options":["选项一","选项二"]}
+{"action":"ask","questions":[
+  {"question":"缺的关键信息，一句话","options":["选项一","选项二"]},
+  {"question":"第二个问题（没有选项就是自由填写）"}
+]}
 {"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"完整文件内容"}
 {"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"换成的内容"}
 {"action":"delete","path":"x.js","label":"为什么删"}
@@ -100,11 +103,22 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
    - 用户只是随口说了一句，还没提出具体任务
    → 自然回一句，停下等用户。**别把寒暄变成问卷。**
 
-6. 什么时候 ask（带 2～4 个选项）：
-   - 真的有一个岔路口要用户拍板：技术栈、要不要后端、用不用某个库、
-     需要密钥、需要外部服务
-   - 选项必须是互相排斥的具体方案，不能是"你想做点什么"这种空问题
-   - 没有具体选项时，用 say 问一句开放问题，不要硬凑三个选项
+6. 什么时候问（ask）：
+   判据只有一条：**缺了某个信息，你就没法正确开工。**
+
+   典型是该问的：
+   - 要连真实接口/服务，但没有地址或密钥
+   - 技术栈决定了完全不同的实现（React 还是原生、要不要后端）
+   - 需求里两种理解都说得通，选错要重做
+   - 用户要删除/覆盖已有内容，需要确认
+
+   不该问的（自己定或直接做）：
+   - 配色、字号、间距这类审美细节
+   - 文件叫什么名字、放几层目录
+   - "你想做什么"这种开放问题——用 say 问，别做成选项
+
+   一次最多列 4 个问题，只列**真的缺的**，别把能自己定的也塞进去。
+   每个问题的选项必须互斥、具体；没有明确选项就不给 options，让用户自由填。
 
 7. 全部做完再 finish。
 
@@ -281,11 +295,31 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
             raise AgentError("plan 没有给出步骤")
         return {"action": "plan", "steps": steps[:8]}
     if kind == "ask":
-        question = str(raw.get("question") or "").strip()
-        if not question:
+        questions: list[dict[str, Any]] = []
+        raw_questions = raw.get("questions")
+
+        if isinstance(raw_questions, list) and raw_questions:
+            for item in raw_questions[:4]:
+                text = str(item.get("question") or "").strip()
+                if not text:
+                    continue
+                opts = []
+                for o in (item.get("options") or [])[:4]:
+                    label = o.get("label") if isinstance(o, dict) else o
+                    label = str(label or "").strip()
+                    if label:
+                        opts.append(label[:40])
+                questions.append({"question": text[:120], "options": opts})
+        else:
+            # 兼容单个问题的老格式
+            text = str(raw.get("question") or "").strip()
+            if text:
+                opts = [str(o).strip()[:40] for o in (raw.get("options") or []) if str(o).strip()]
+                questions.append({"question": text[:120], "options": opts[:4]})
+
+        if not questions:
             raise AgentError("ask 没有给出问题")
-        options = [str(o).strip()[:24] for o in (raw.get("options") or []) if str(o).strip()]
-        return {"action": "ask", "question": question[:120], "options": options[:4]}
+        return {"action": "ask", "questions": questions}
     if kind == "write":
         code = raw.get("code") or ""
         path = str(raw.get("path") or "").strip().lstrip("/")
@@ -356,6 +390,11 @@ def step(
 
     raw = _chat(msgs)
     action = _normalize(raw)
+
+    if action["action"] == "ask":
+        return {"event": action, "messages": messages + [
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
+        ], "stop": True}
 
     if action["action"] == "say":
         return {"event": action, "messages": messages + [

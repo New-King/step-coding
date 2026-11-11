@@ -1630,3 +1630,63 @@ button {
   line-height: 1.65;
   color: var(--ink);
 }
+
+/* ---- 逐题追问 ---- */
+.ask-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
+  color: var(--faint);
+}
+
+.ask-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.ask-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--line);
+  transition: background 0.2s var(--ease);
+}
+
+.ask-dots i.done {
+  background: var(--faint);
+}
+
+.ask-dots i.on {
+  background: var(--ink);
+}
+
+.ask-answered {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: #f6f6f8;
+}
+
+.ask-answered-line {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.aa-q {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.aa-a {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.ask-done-q + .ask-done-q {
+  margin-top: 6px;
+}
