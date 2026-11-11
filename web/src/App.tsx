@@ -18,7 +18,11 @@ hljs.registerLanguage("go", go);
 type Event =
   | { action: "think"; text: string }
   | { action: "look"; path: string }
-  | { action: "search"; query: string; results?: { title: string; url: string; snippet: string }[] }
+  | {
+      action: "search";
+      query: string;
+      results?: { title: string; url: string; snippet: string; site?: string }[];
+    }
   | { action: "plan"; steps: string[] }
   | { action: "ask"; question: string; options: string[] }
   | { action: "write"; path: string; lang: string; label: string; code: string }
@@ -116,12 +120,14 @@ export default function App() {
   const startFilesRef = useRef<Record<string, string>>({});
   const itemsRef = useRef<Item[]>([]);
   const idRef = useRef(0);
+  const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runningRef = useRef(false);
   const waitingRef = useRef(false);
   const stepLabelRef = useRef("");
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   const note = (tag: string, text: string) => {
     const entry = { t: Date.now(), tag, text };
@@ -178,7 +184,7 @@ export default function App() {
     await nextRound();
   };
 
-  const nextRound = async () => {
+  const nextRound = async (pendingSearch = "") => {
     if (!runningRef.current || waitingRef.current) return;
     if (roundRef.current >= MAX_ROUNDS) {
       finish("步数到上限，先停在这里。");
@@ -190,6 +196,7 @@ export default function App() {
         messages: messagesRef.current,
         files: filesRef.current,
         round: roundRef.current,
+        pending_search: pendingSearch,
       });
       roundRef.current += 1;
       messagesRef.current = res.messages;
@@ -208,17 +215,30 @@ export default function App() {
   const handle = async (ev: Event) => {
     note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
 
-    if (
-      ev.action === "think" ||
-      ev.action === "look" ||
-      ev.action === "search" ||
-      ev.action === "plan"
-    ) {
+    if (ev.action === "search") {
+      if (!ev.results) {
+        // 第一段：先把"正在搜"挂出来，再去抓结果
+        push(ev);
+        pendingCardRef.current = itemsRef.current[itemsRef.current.length - 1].id;
+        window.setTimeout(() => void nextRound(ev.query), 60);
+        return;
+      }
+      // 第二段：结果回来，补到同一张卡上
+      const id = pendingCardRef.current;
+      pendingCardRef.current = null;
+      if (id != null) {
+        itemsRef.current = itemsRef.current.map((it) => (it.id === id ? { ...it, ev } : it));
+        setItems(itemsRef.current);
+      } else {
+        push(ev);
+      }
+      window.setTimeout(() => void nextRound(), 260);
+      return;
+    }
+
+    if (ev.action === "think" || ev.action === "look" || ev.action === "plan") {
       push(ev);
-      window.setTimeout(
-        () => void nextRound(),
-        ev.action === "plan" ? 700 : ev.action === "search" ? 500 : 350
-      );
+      window.setTimeout(() => void nextRound(), ev.action === "plan" ? 700 : 350);
       return;
     }
 
@@ -461,6 +481,13 @@ export default function App() {
     stepLabelRef.current = next;
   }, [stepLabel, snap.total, snap.finished]);
 
+  // 新内容一进来就滚到底，别让提问卡藏在下面
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [items, asking]);
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -626,7 +653,7 @@ export default function App() {
 
         <aside className="chat">
           <div className="chat-head">过程</div>
-          <div className="chat-log">
+          <div className="chat-log" ref={logRef}>
             {items.map((item) => (
               <TimelineItem
                 key={item.id}
@@ -706,6 +733,14 @@ export default function App() {
   );
 }
 
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 function countLines(files: Record<string, string>) {
   return Object.values(files).reduce((n, body) => n + body.split("\n").length - 1, 0);
 }
@@ -722,19 +757,38 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
   }
 
   if (ev.action === "search") {
+    const done = Boolean(ev.results);
     return (
       <div className="tl search">
-        <div className="search-q">搜索 {ev.query}</div>
-        {ev.results && ev.results.length > 0 ? (
-          ev.results.slice(0, 3).map((r, i) => (
-            <a key={i} className="search-hit" href={r.url} target="_blank" rel="noreferrer">
-              <span className="hit-title">{r.title}</span>
-              <span className="hit-url">{r.url.replace(/^https?:\/\//, "").slice(0, 46)}</span>
-            </a>
-          ))
-        ) : (
-          <div className="search-empty">没搜到结果</div>
-        )}
+        <div className="ws-head">
+          <span className={`ws-ring ${done ? "done" : ""}`} />
+          <span className="ws-query">{ev.query}</span>
+          {done && <span className="ws-count">{ev.results!.length} 条</span>}
+        </div>
+
+        {!done && <div className="ws-waiting">正在搜…</div>}
+
+        {done &&
+          (ev.results!.length > 0 ? (
+            <div className="ws-grid">
+              {ev.results!.slice(0, 4).map((r, i) => (
+                <a
+                  key={i}
+                  className="ws-card"
+                  style={{ animationDelay: `${i * 45}ms` }}
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <span className="ws-fav">{(r.site || hostOf(r.url))[0] ?? "·"}</span>
+                  <span className="ws-title">{r.title || r.url}</span>
+                  <span className="ws-host">{hostOf(r.url)}</span>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <div className="ws-waiting">没搜到结果</div>
+          ))}
       </div>
     );
   }

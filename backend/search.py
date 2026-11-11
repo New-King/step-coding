@@ -136,6 +136,24 @@ def fetch(url: str) -> str:
     return str(data.get("content") or "")[:6000]
 
 
+def dedupe(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """同一个域名最多留两条，别让一页文档占满整块。"""
+    seen_host: dict[str, int] = {}
+    out = []
+    seen_url = set()
+    for item in results:
+        url = item.get("url", "")
+        if not url or url in seen_url:
+            continue
+        host = url.split("/")[2] if url.startswith("http") else url
+        if seen_host.get(host, 0) >= 2:
+            continue
+        seen_host[host] = seen_host.get(host, 0) + 1
+        seen_url.add(url)
+        out.append(item)
+    return out
+
+
 def render(results: list[dict[str, Any]]) -> str:
     if not results:
         return "没有搜到结果。"

@@ -30,12 +30,13 @@ class StepIn(BaseModel):
     messages: list[dict[str, str]]
     files: dict[str, str] = {}
     round: int = 0
+    pending_search: str = ""
 
 
 @app.post("/api/step")
 def post_step(body: StepIn) -> dict[str, Any]:
     try:
-        return agent.step(body.messages, body.files, body.round)
+        return agent.step(body.messages, body.files, body.round, body.pending_search)
     except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

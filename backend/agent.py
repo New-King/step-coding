@@ -76,8 +76,9 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 工作方式：
 1. 先 think，说明你打算怎么看这件事、要做几个文件。
 2. 需要看现状就先 look（新项目也要看一眼根目录，确认是不是空的）。
-3. 不确定某个 API 怎么用、某个错误什么意思，先 search 查；不确定用户环境里
-   有没有的东西，不要猜。然后 plan，把步骤列出来。
+3. 只在**不确定**或需要**最新信息**时才 search（API 用法、报错原因、库的新写法）。
+   你确定的事不要搜——搜一次花钱也拖时间。不确定用户环境里有没有的东西，问，不要猜。
+   然后 plan，把步骤列出来。
 5. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
 6. 遇到必须用户决定的事（技术栈、风格、需要密钥、外部服务、要不要新增页面），
    用 ask，给 2～4 个选项。不要自己替用户决定。
@@ -283,8 +284,28 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     return {"action": "finish", "text": str(raw.get("text") or "").strip()[:120]}
 
 
-def step(messages: list[dict[str, str]], files: dict[str, str], round_no: int) -> dict[str, Any]:
-    """跑一轮，返回下一个动作。"""
+def step(
+    messages: list[dict[str, str]],
+    files: dict[str, str],
+    round_no: int,
+    pending_search: str = "",
+) -> dict[str, Any]:
+    """跑一轮，返回下一个动作。
+
+    pending_search 非空：界面已经显示过「正在搜」，这一轮只把结果抓回来补上。
+    """
+    if pending_search:
+        try:
+            results = search.dedupe(search.query(pending_search))
+            detail = search.render(results)
+        except search.SearchError as exc:
+            results = []
+            detail = f"搜索失败：{exc}"
+        return {
+            "event": {"action": "search", "query": pending_search, "results": results},
+            "messages": messages + [{"role": "user", "content": f"搜索结果：\n{detail}"}],
+        }
+
     if round_no >= MAX_ROUNDS:
         return {"event": {"action": "finish", "text": "步数到上限，先停在这里"}, "messages": messages}
 
@@ -299,17 +320,13 @@ def step(messages: list[dict[str, str]], files: dict[str, str], round_no: int) -
     action = _normalize(raw)
 
     if action["action"] == "search":
-        try:
-            results = search.query(action["query"])
-            detail = search.render(results)
-        except search.SearchError as exc:
-            results = []
-            detail = f"搜索失败：{exc}"
-        messages = messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
-            {"role": "user", "content": f"搜索结果：\n{detail}"},
-        ]
-        return {"event": {**action, "results": results}, "messages": messages}
+        # 先把动作交回去（界面显示「正在搜」），结果下一轮再补
+        return {
+            "event": action,
+            "messages": messages
+            + [{"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}],
+            "pending_search": action["query"],
+        }
 
     if action["action"] == "look":
         # look 不改文件，直接把看的结果塞回上下文
