@@ -18,6 +18,7 @@ hljs.registerLanguage("go", go);
 type Event =
   | { action: "think"; text: string }
   | { action: "look"; path: string }
+  | { action: "search"; query: string; results?: { title: string; url: string; snippet: string }[] }
   | { action: "plan"; steps: string[] }
   | { action: "ask"; question: string; options: string[] }
   | { action: "write"; path: string; lang: string; label: string; code: string }
@@ -704,6 +705,24 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
 
   if (ev.action === "look") {
     return <div className="tl look">查看 {ev.path || "项目根目录"}</div>;
+  }
+
+  if (ev.action === "search") {
+    return (
+      <div className="tl search">
+        <div className="search-q">搜索 {ev.query}</div>
+        {ev.results && ev.results.length > 0 ? (
+          ev.results.slice(0, 3).map((r, i) => (
+            <a key={i} className="search-hit" href={r.url} target="_blank" rel="noreferrer">
+              <span className="hit-title">{r.title}</span>
+              <span className="hit-url">{r.url.replace(/^https?:\/\//, "").slice(0, 46)}</span>
+            </a>
+          ))
+        ) : (
+          <div className="search-empty">没搜到结果</div>
+        )}
+      </div>
+    );
   }
 
   if (ev.action === "plan") {

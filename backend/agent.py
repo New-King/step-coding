@@ -24,6 +24,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from . import search
+
 ROOT = Path(__file__).resolve().parent.parent
 
 API_KEY = ""
@@ -63,6 +65,7 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 可用动作：
 {"action":"think","text":"我现在在确认什么、打算怎么做，60 字以内"}
 {"action":"look","path":"目录或文件，空字符串表示项目根"}
+{"action":"search","query":"要搜什么，一句话"}
 {"action":"plan","steps":["做哪几步，每步 10 字以内"]}
 {"action":"ask","question":"需要用户决定的事","options":["选项一","选项二"]}
 {"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"完整文件内容"}
@@ -73,11 +76,12 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 工作方式：
 1. 先 think，说明你打算怎么看这件事、要做几个文件。
 2. 需要看现状就先 look（新项目也要看一眼根目录，确认是不是空的）。
-3. 然后 plan，把步骤列出来，让用户知道你要干什么。
-4. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
-5. 遇到必须用户决定的事（技术栈、风格、需要密钥、外部服务、要不要新增页面），
+3. 不确定某个 API 怎么用、某个错误什么意思，先 search 查；不确定用户环境里
+   有没有的东西，不要猜。然后 plan，把步骤列出来。
+5. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
+6. 遇到必须用户决定的事（技术栈、风格、需要密钥、外部服务、要不要新增页面），
    用 ask，给 2～4 个选项。不要自己替用户决定。
-6. 全部做完再 finish。
+7. 全部做完再 finish。
 
 约束（通用，不要假设具体项目）：
 - 一次只做一件事：这一轮只输出一个动作。
@@ -87,6 +91,33 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 - 不要引入构建工具、包管理、TypeScript、框架，除非用户明确要。
 - 不要虚构外部资源（API 地址、密钥、图片链接）；需要就 ask。
 - 说话简短，像同事，不要客套。"""
+
+
+def _parse(text: str) -> dict[str, Any] | None:
+    """尽量从模型输出里抠出 JSON：可能带 ``` 围栏，也可能前后有废话。"""
+    import re as _re
+
+    body = text.strip()
+    fence = _re.search(r"```(?:json)?\s*(.+?)```", body, _re.S)
+    if fence:
+        body = fence.group(1).strip()
+
+    try:
+        value = json.loads(body)
+        return value if isinstance(value, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    start, end = body.find("{"), body.rfind("}")
+    if start >= 0 and end > start:
+        chunk = body[start : end + 1]
+        for candidate in (chunk, chunk.replace("\n", "\\n").replace("\r", "")):
+            try:
+                value = json.loads(candidate)
+                return value if isinstance(value, dict) else None
+            except json.JSONDecodeError:
+                continue
+    return None
 
 
 def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -117,10 +148,38 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     content = (data["choices"][0].get("message") or {}).get("content") or ""
     if not content.strip():
         raise AgentError("模型没有返回内容")
+
+    parsed = _parse(content)
+    if parsed is not None:
+        return parsed
+
+    # 不合法就再来一次，把要求说得更死
+    print(f"[agent] 非法 JSON，尾部片段: {content[-120:]!r}", flush=True)
+    body["messages"] = messages + [
+        {"role": "assistant", "content": content[:2000]},
+        {
+            "role": "user",
+            "content": "上面不是合法 JSON。重新输出一个合法的 JSON 对象，只输出对象本身，"
+            "不要代码块标记；字符串里的换行必须写成 \\n。",
+        },
+    ]
+    req = urllib.request.Request(
+        f"{BASE_URL}/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AgentError("模型返回的不是合法 JSON") from exc
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            retried = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise AgentError(f"重试失败：{exc}") from exc
+
+    content2 = (retried["choices"][0].get("message") or {}).get("content") or ""
+    parsed2 = _parse(content2)
+    if parsed2 is None:
+        raise AgentError("模型这次还是没给出合法 JSON")
+    return parsed2
 
 
 def _tree(files: dict[str, str]) -> str:
@@ -165,13 +224,18 @@ def _apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str
 
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
-    if kind not in {"think", "look", "plan", "ask", "write", "edit", "delete", "finish"}:
+    if kind not in {"think", "look", "search", "plan", "ask", "write", "edit", "delete", "finish"}:
         raise AgentError(f"不认识的动作：{kind or '(空)'}")
 
     if kind == "think":
         return {"action": "think", "text": str(raw.get("text") or "").strip()[:200]}
     if kind == "look":
         return {"action": "look", "path": str(raw.get("path") or "").strip().lstrip("/")}
+    if kind == "search":
+        text = str(raw.get("query") or "").strip()
+        if not text:
+            raise AgentError("search 没有给出 query")
+        return {"action": "search", "query": text[:120]}
     if kind == "plan":
         steps = [str(s).strip()[:24] for s in (raw.get("steps") or []) if str(s).strip()]
         if not steps:
@@ -225,10 +289,27 @@ def step(messages: list[dict[str, str]], files: dict[str, str], round_no: int) -
         return {"event": {"action": "finish", "text": "步数到上限，先停在这里"}, "messages": messages}
 
     ctx = _context(files)
-    msgs = [{"role": "system", "content": SYSTEM + "\n\n" + ctx}, *messages]
+    if search.enabled():
+        ability = "当前有联网搜索能力，可以用 search 查资料。"
+    else:
+        ability = "当前没有配置联网搜索，不要使用 search 动作。"
+    msgs = [{"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}, *messages]
 
     raw = _chat(msgs)
     action = _normalize(raw)
+
+    if action["action"] == "search":
+        try:
+            results = search.query(action["query"])
+            detail = search.render(results)
+        except search.SearchError as exc:
+            results = []
+            detail = f"搜索失败：{exc}"
+        messages = messages + [
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
+            {"role": "user", "content": f"搜索结果：\n{detail}"},
+        ]
+        return {"event": {**action, "results": results}, "messages": messages}
 
     if action["action"] == "look":
         # look 不改文件，直接把看的结果塞回上下文

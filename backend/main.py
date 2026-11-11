@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent
+from . import agent, search
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -42,7 +42,12 @@ def post_step(body: StepIn) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "model": agent.MODEL, "configured": agent.has_key()}
+    return {
+        "ok": True,
+        "model": agent.MODEL,
+        "configured": agent.has_key(),
+        "search": search.provider() if search.enabled() else None,
+    }
 
 
 if WEB_DIST.exists():
