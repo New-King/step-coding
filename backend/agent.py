@@ -71,6 +71,7 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 {"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"完整文件内容"}
 {"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"换成的内容"}
 {"action":"delete","path":"x.js","label":"为什么删"}
+{"action":"say","text":"只是回一句话，结束这一轮"}
 {"action":"finish","text":"一句话总结做了什么"}
 {"action":"decline","text":"礼貌说明这里不做这个","suggestions":["可以让我做的事一","可以让我做的事二"]}
 
@@ -91,9 +92,20 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 3. 只在**不确定**或需要**最新信息**时才 search（API 用法、报错原因、库的新写法）。
    你确定的事不要搜——搜一次花钱也拖时间。不确定用户环境里有没有的东西，问，不要猜。
    然后 plan，把步骤列出来。
-5. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
-6. 遇到必须用户决定的事（技术栈、风格、需要密钥、外部服务、要不要新增页面），
-   用 ask，给 2～4 个选项。不要自己替用户决定。
+4. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
+
+5. 什么时候 say（只回一句话，结束这一轮，不给选项）：
+   - 打招呼、寒暄、道谢、告别（"你好"、"谢谢"、"在吗"）
+   - 问你是谁、能做什么
+   - 用户只是随口说了一句，还没提出具体任务
+   → 自然回一句，停下等用户。**别把寒暄变成问卷。**
+
+6. 什么时候 ask（带 2～4 个选项）：
+   - 真的有一个岔路口要用户拍板：技术栈、要不要后端、用不用某个库、
+     需要密钥、需要外部服务
+   - 选项必须是互相排斥的具体方案，不能是"你想做点什么"这种空问题
+   - 没有具体选项时，用 say 问一句开放问题，不要硬凑三个选项
+
 7. 全部做完再 finish。
 
 约束（通用，不要假设具体项目）：
@@ -238,7 +250,8 @@ def _apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
     if kind not in {
-        "think", "look", "search", "plan", "ask", "write", "edit", "delete", "finish", "decline"
+        "think", "look", "search", "plan", "say", "ask", "write", "edit",
+        "delete", "finish", "decline"
     }:
         raise AgentError(f"不认识的动作：{kind or '(空)'}")
 
@@ -246,6 +259,11 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         return {"action": "think", "text": str(raw.get("text") or "").strip()[:200]}
     if kind == "look":
         return {"action": "look", "path": str(raw.get("path") or "").strip().lstrip("/")}
+    if kind == "say":
+        text = str(raw.get("text") or "").strip()
+        if not text:
+            raise AgentError("say 没有内容")
+        return {"action": "say", "text": text[:200]}
     if kind == "decline":
         text = str(raw.get("text") or "").strip()
         if not text:
@@ -338,6 +356,11 @@ def step(
 
     raw = _chat(msgs)
     action = _normalize(raw)
+
+    if action["action"] == "say":
+        return {"event": action, "messages": messages + [
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
+        ], "stop": True}
 
     if action["action"] == "decline":
         return {"event": action, "messages": messages + [

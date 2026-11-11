@@ -1617,3 +1617,16 @@ button {
 .ask {
   overflow-y: auto;
 }
+
+/* ---- 普通回话（不是提问，也不是拒绝） ---- */
+.tl.say {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 9px 12px;
+  border-radius: 12px 12px 12px 4px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink);
+}

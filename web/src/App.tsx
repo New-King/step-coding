@@ -30,6 +30,7 @@ type Event =
   | { action: "delete"; path: string; label: string }
   | { action: "error"; text: string }
   | { action: "finish"; text: string }
+  | { action: "say"; text: string }
   | { action: "decline"; text: string; suggestions: string[] }
   | { action: "user"; text: string; interrupt?: boolean };
 
@@ -282,6 +283,13 @@ export default function App() {
     if (ev.action === "error") {
       push(ev);
       window.setTimeout(() => void nextRound(), 400);
+      return;
+    }
+
+    if (ev.action === "say") {
+      stopRun();
+      push(ev);
+      window.setTimeout(() => composerRef.current?.focus(), 60);
       return;
     }
 
@@ -1035,6 +1043,10 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
         <span className="op-label">{ev.label}</span>
       </div>
     );
+  }
+
+  if (ev.action === "say") {
+    return <div className="tl say">{ev.text}</div>;
   }
 
   if (ev.action === "decline") {
