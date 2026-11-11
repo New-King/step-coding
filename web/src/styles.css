@@ -1585,3 +1585,35 @@ button {
   background: rgba(255, 255, 255, 0.18);
   flex: 0 0 auto;
 }
+
+/* ---- 标题与状态 ---- */
+.status {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status.busy {
+  color: var(--ink);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.status.wait {
+  color: #8a5a00;
+  border-color: #f0dcb8;
+  background: #fffaf0;
+}
+
+.status.done {
+  color: #2e7d32;
+  border-color: #d8ebd9;
+  background: #f4fbf4;
+}
+
+/* 首页内容多了也能滚，别把拒绝卡挤出屏幕 */
+.ask {
+  overflow-y: auto;
+}

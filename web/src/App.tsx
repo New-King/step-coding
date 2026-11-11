@@ -279,22 +279,7 @@ export default function App() {
       return;
     }
 
-    if (ev.action === "decline") {
-    return (
-      <div className="tl decline">
-        <div>{ev.text}</div>
-        {ev.suggestions.length > 0 && (
-          <div className="decline-ideas">
-            {ev.suggestions.map((idea) => (
-              <span key={idea} className="decline-idea">{idea}</span>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (ev.action === "error") {
+    if (ev.action === "error") {
       push(ev);
       window.setTimeout(() => void nextRound(), 400);
       return;
@@ -303,14 +288,9 @@ export default function App() {
     if (ev.action === "decline") {
       stopRun();
       setAsking(null);
-      // 还没开始干活：留在首页，别把人拽进空工作区
-      if (Object.keys(filesRef.current).length === 0 && !itemsRef.current.some((i) => i.kind === "write")) {
-        setDeclined(ev);
-        setStarted(false);
-      } else {
-        push(ev);
-        setDeclined(ev);
-      }
+      // 一律留在当前界面，把话说清楚，不要把人弹到一个看不见的地方
+      push(ev);
+      setDeclined(ev);
       return;
     }
 
@@ -418,11 +398,16 @@ export default function App() {
           ? { ...item, id: sid, title: prev[same].title || item.title, updatedAt: Date.now() }
           : { ...item, id: sid, updatedAt: Date.now() };
       const rest = prev.filter((_, i) => i !== same);
-      const next = [merged, ...rest].slice(0, 6);
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-      } catch {
-        /* 存不下就算了 */
+      let next = [merged, ...rest].slice(0, 6);
+
+      // 浏览器给每个站点约 5MB，塞不下就把最旧的挤掉再试
+      while (next.length > 1) {
+        try {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+          break;
+        } catch {
+          next = next.slice(0, -1);
+        }
       }
       return next;
     });
@@ -527,6 +512,14 @@ export default function App() {
   };
 
   /* ------------------------------------------------------------ 展示 */
+
+  const firstUserItem = itemsRef.current.find(
+    (i) => i.kind === "user" && i.ev.action === "user"
+  );
+  const projectTitle =
+    firstUserItem && firstUserItem.ev.action === "user"
+      ? firstUserItem.ev.text.slice(0, 22)
+      : "新项目";
 
   const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
   const activeFile =
@@ -730,7 +723,10 @@ export default function App() {
       <header className="bar">
         <div className="brand">
           <span className="logo" />
-          <span className="name">{running ? "正在做" : asking ? "等你决定" : "已完成"}</span>
+          <span className="name">{projectTitle}</span>
+          <span className={`status ${running ? "busy" : asking ? "wait" : "done"}`}>
+            {running ? "进行中" : asking ? "等你决定" : "已完成"}
+          </span>
         </div>
         <div className="spacer" />
         <label className="speed">
@@ -1037,6 +1033,21 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
         <span className="op-tag del">删除</span>
         <span className="op-path">{ev.path}</span>
         <span className="op-label">{ev.label}</span>
+      </div>
+    );
+  }
+
+  if (ev.action === "decline") {
+    return (
+      <div className="tl decline">
+        <div>{ev.text}</div>
+        {ev.suggestions.length > 0 && (
+          <div className="decline-ideas">
+            {ev.suggestions.map((idea) => (
+              <span key={idea} className="decline-idea">{idea}</span>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
