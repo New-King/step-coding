@@ -1515,3 +1515,50 @@ button {
   color: var(--muted);
   padding-left: 22px;
 }
+
+/* ---- 超出范围的礼貌拒绝 ---- */
+.decline-card {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fafafa;
+  text-align: left;
+  animation: rise 0.3s var(--ease) both;
+}
+
+.decline-text {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.decline-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.decline-card .ask-chip {
+  font-size: 11.5px;
+  padding: 5px 10px;
+}
+
+.tl.decline {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fafafa;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.decline-idea {
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}

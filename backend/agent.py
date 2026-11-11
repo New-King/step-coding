@@ -72,6 +72,18 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 {"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"换成的内容"}
 {"action":"delete","path":"x.js","label":"为什么删"}
 {"action":"finish","text":"一句话总结做了什么"}
+{"action":"decline","text":"礼貌说明这里不做这个","suggestions":["可以让我做的事一","可以让我做的事二"]}
+
+你的范围：写代码、讲代码、看项目、改项目。
+超出这个范围的需求（新闻、天气、闲聊八卦、情感建议、作业代写、写非代码的文章、
+搜索跟技术无关的信息等）不要去做，也不要用 search 去查——用 decline 礼貌说明，
+并给 2～3 个你真正能做的事作为引导。
+
+拒绝时的语气：
+- 先承认对方的需求是合理的，不要显得嫌弃
+- 一句话说清这里只做代码相关的事
+- 立刻给出替代选择（具体到能直接说出口的一句话）
+- 不要道歉三遍，不要讲大道理
 
 工作方式：
 1. 先 think，说明你打算怎么看这件事、要做几个文件。
@@ -225,13 +237,21 @@ def _apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str
 
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
-    if kind not in {"think", "look", "search", "plan", "ask", "write", "edit", "delete", "finish"}:
+    if kind not in {
+        "think", "look", "search", "plan", "ask", "write", "edit", "delete", "finish", "decline"
+    }:
         raise AgentError(f"不认识的动作：{kind or '(空)'}")
 
     if kind == "think":
         return {"action": "think", "text": str(raw.get("text") or "").strip()[:200]}
     if kind == "look":
         return {"action": "look", "path": str(raw.get("path") or "").strip().lstrip("/")}
+    if kind == "decline":
+        text = str(raw.get("text") or "").strip()
+        if not text:
+            raise AgentError("decline 没有给出说明")
+        ideas = [str(x).strip()[:40] for x in (raw.get("suggestions") or []) if str(x).strip()]
+        return {"action": "decline", "text": text[:200], "suggestions": ideas[:3]}
     if kind == "search":
         text = str(raw.get("query") or "").strip()
         if not text:
@@ -318,6 +338,11 @@ def step(
 
     raw = _chat(msgs)
     action = _normalize(raw)
+
+    if action["action"] == "decline":
+        return {"event": action, "messages": messages + [
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
+        ], "stop": True}
 
     if action["action"] == "search":
         # 先把动作交回去（界面显示「正在搜」），结果下一轮再补

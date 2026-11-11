@@ -29,7 +29,8 @@ type Event =
   | { action: "edit"; path: string; label: string; find: string; replace: string }
   | { action: "delete"; path: string; label: string }
   | { action: "error"; text: string }
-  | { action: "finish"; text: string };
+  | { action: "finish"; text: string }
+  | { action: "decline"; text: string; suggestions: string[] };
 
 type Item = { id: number; kind: Event["action"]; ev: Event };
 
@@ -102,6 +103,7 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
   const [running, setRunning] = useState(false);
   const [asking, setAsking] = useState<Extract<Event, { action: "ask" }> | null>(null);
+  const [declined, setDeclined] = useState<Extract<Event, { action: "decline" }> | null>(null);
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -169,6 +171,7 @@ export default function App() {
     setStarted(true);
     setError(null);
     setAsking(null);
+    setDeclined(null);
     setItems([]);
     itemsRef.current = [];
     idRef.current = 0;
@@ -208,7 +211,9 @@ export default function App() {
       note("loop.error", msg);
       setError(msg);
       push({ action: "error", text: msg } as Event);
-      finish("");
+      // 出错就停住，别接着跑自检（什么都没做呢）
+      setRunning(false);
+      runningRef.current = false;
     }
   };
 
@@ -258,9 +263,38 @@ export default function App() {
       return;
     }
 
-    if (ev.action === "error") {
+    if (ev.action === "decline") {
+    return (
+      <div className="tl decline">
+        <div>{ev.text}</div>
+        {ev.suggestions.length > 0 && (
+          <div className="decline-ideas">
+            {ev.suggestions.map((idea) => (
+              <span key={idea} className="decline-idea">{idea}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (ev.action === "error") {
       push(ev);
       window.setTimeout(() => void nextRound(), 400);
+      return;
+    }
+
+    if (ev.action === "decline") {
+      stopRun();
+      setAsking(null);
+      // 还没开始干活：留在首页，别把人拽进空工作区
+      if (Object.keys(filesRef.current).length === 0 && !itemsRef.current.some((i) => i.kind === "write")) {
+        setDeclined(ev);
+        setStarted(false);
+      } else {
+        push(ev);
+        setDeclined(ev);
+      }
       return;
     }
 
@@ -308,6 +342,10 @@ export default function App() {
     runningRef.current = false;
 
     const files = filesRef.current;
+    if (Object.keys(files).length === 0) {
+      note("finish", "没有产生文件，跳过自检");
+      return;
+    }
     const issues = checkFiles(files);
     note("finish", `${Object.keys(files).length} 文件 · ${issues.length} 问题`);
     setItems((prev) => prev);
@@ -552,6 +590,29 @@ export default function App() {
               ))}
             </div>
             {composer("说一句…")}
+
+            {declined && (
+              <div className="decline-card">
+                <div className="decline-text">{declined.text}</div>
+                {declined.suggestions.length > 0 && (
+                  <div className="decline-ideas">
+                    {declined.suggestions.map((idea) => (
+                      <button
+                        key={idea}
+                        className="ask-chip"
+                        onClick={() => {
+                          setDeclined(null);
+                          void start(idea);
+                        }}
+                      >
+                        {idea}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {error && <div className="ask-error">{error}</div>}
           </div>
         </div>
