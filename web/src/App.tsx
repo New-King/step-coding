@@ -130,6 +130,9 @@ export default function App() {
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const codeRef = useRef<HTMLDivElement | null>(null);
+  const logStickRef = useRef(true);
+  const codeStickRef = useRef(true);
 
   const note = (tag: string, text: string) => {
     const entry = { t: Date.now(), tag, text };
@@ -519,12 +522,29 @@ export default function App() {
     stepLabelRef.current = next;
   }, [stepLabel, snap.total, snap.finished]);
 
-  // 新内容一进来就滚到底，别让提问卡藏在下面
+  /** 离底部够近才算"跟着走"，用户往上翻过就停手。 */
+  const nearBottom = (el: HTMLElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+
+  // 过程区：新内容跟着滚，但你滑上去了就不抢
   useEffect(() => {
     const el = logRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (el && logStickRef.current) el.scrollTop = el.scrollHeight;
   }, [items, asking]);
+
+  // 代码区：一边写一边往下跟，同样尊重手动滚动
+  useEffect(() => {
+    const el = codeRef.current;
+    if (el && codeStickRef.current) el.scrollTop = el.scrollHeight;
+  }, [code]);
+
+  // 换文件时回到开头看
+  useEffect(() => {
+    const el = codeRef.current;
+    if (!el) return;
+    codeStickRef.current = true;
+    el.scrollTop = 0;
+  }, [activeFile]);
 
   const copy = async () => {
     try {
@@ -684,7 +704,14 @@ export default function App() {
               <span className="code-path">{activeFile || "等待第一步"}</span>
               <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
             </div>
-            <div className="code">
+            <div
+              className="code"
+              ref={codeRef}
+              onScroll={() => {
+                const el = codeRef.current;
+                if (el) codeStickRef.current = nearBottom(el);
+              }}
+            >
               {code ? (
                 <>
                   <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
@@ -714,7 +741,14 @@ export default function App() {
 
         <aside className="chat">
           <div className="chat-head">过程</div>
-          <div className="chat-log" ref={logRef}>
+          <div
+            className="chat-log"
+            ref={logRef}
+            onScroll={() => {
+              const el = logRef.current;
+              if (el) logStickRef.current = nearBottom(el);
+            }}
+          >
             {items.map((item) => (
               <TimelineItem
                 key={item.id}
