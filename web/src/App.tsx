@@ -41,6 +41,7 @@ type HistoryItem = {
   items: Item[];
   base: Record<string, string>;
   files: Record<string, string>;
+  updatedAt?: number;
 };
 
 const EMPTY: Snapshot = {
@@ -400,8 +401,19 @@ export default function App() {
       base: startFilesRef.current,
       files,
     };
+    // 用"文件集合"认项目：同一批文件来回改，只更新那一条记录，不新增
+    const sig = Object.keys(files).sort().join("|");
+
     setHistory((prev) => {
-      const next = [item, ...prev.filter((x) => x.title !== item.title)].slice(0, 6);
+      const same = prev.findIndex(
+        (x) => Object.keys(x.files).sort().join("|") === sig
+      );
+      const merged =
+        same >= 0
+          ? { ...item, title: prev[same].title || item.title, updatedAt: Date.now() }
+          : { ...item, updatedAt: Date.now() };
+      const rest = prev.filter((_, i) => i !== same);
+      const next = [merged, ...rest].slice(0, 6);
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
       } catch {
@@ -693,7 +705,8 @@ export default function App() {
                 >
                   <span className="hi-title">{item.title || "最近一次"}</span>
                   <span className="hi-meta">
-                    {Object.keys(item.files).length} 个文件 · {countLines(item.files)} 行
+                    {item.updatedAt ? `${timeAgo(item.updatedAt)} · ` : ""}
+                    {Object.keys(item.files).length} 个文件
                   </span>
                 </button>
               ))}
@@ -897,6 +910,15 @@ function hostOf(url: string) {
   } catch {
     return url;
   }
+}
+
+function timeAgo(ts: number) {
+  const min = Math.floor((Date.now() - ts) / 60000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  return `${Math.floor(hour / 24)} 天前`;
 }
 
 function countLines(files: Record<string, string>) {
