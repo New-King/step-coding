@@ -1690,3 +1690,16 @@ button {
 .ask-done-q + .ask-done-q {
   margin-top: 6px;
 }
+
+/* 拒绝里的替代选项，点了就能开工 */
+.decline-idea {
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.16s var(--ease);
+}
+
+.decline-idea:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+  background: #fff;
+}

@@ -860,6 +860,7 @@ export default function App() {
                 key={item.id}
                 item={item}
                 live={item.ev.action === "ask" && pending === item.ev.questions}
+                onIdea={(text) => void send(text)}
               />
             ))}
 
@@ -987,7 +988,15 @@ function countLines(files: Record<string, string>) {
   return Object.values(files).reduce((n, body) => n + body.split("\n").length - 1, 0);
 }
 
-function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
+function TimelineItem({
+  item,
+  live,
+  onIdea,
+}: {
+  item: Item;
+  live?: boolean;
+  onIdea?: (text: string) => void;
+}) {
   const ev = item.ev;
 
   if (ev.action === "user") {
@@ -1112,7 +1121,14 @@ function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
         {ev.suggestions.length > 0 && (
           <div className="decline-ideas">
             {ev.suggestions.map((idea) => (
-              <span key={idea} className="decline-idea">{idea}</span>
+              <button
+                key={idea}
+                className="decline-idea"
+                onClick={() => onIdea?.(idea)}
+                title="点一下就按这个开工"
+              >
+                {idea}
+              </button>
             ))}
           </div>
         )}
