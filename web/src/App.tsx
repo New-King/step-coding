@@ -134,7 +134,6 @@ export default function App() {
   const idRef = useRef(0);
   const sessionIdRef = useRef("");
   const answeringRef = useRef(false);
-  const clickedRef = useRef<Set<number>>(new Set());
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runningRef = useRef(false);
@@ -198,7 +197,6 @@ export default function App() {
     setDeclined(null);
     setItems([]);
     itemsRef.current = [];
-    clickedRef.current = new Set();
     idRef.current = 0;
     filesRef.current = {};
     startFilesRef.current = {};
@@ -874,9 +872,6 @@ export default function App() {
                 item={item}
                 live={item.ev.action === "ask" && pending === item.ev.questions}
                 onIdea={(text) => {
-                  // 同步挡住连点：disabled 要等下一次渲染才生效
-                  if (clickedRef.current.has(item.id)) return;
-                  clickedRef.current.add(item.id);
                   markUsed(item.id, text);
                   void send(text);
                 }}
@@ -1140,22 +1135,25 @@ function TimelineItem({
         <div>{ev.text}</div>
         {ev.suggestions.length > 0 && (
           <div className="decline-ideas">
-            {ev.suggestions.map((idea) => (
-              <button
-                key={idea}
-                className={`decline-idea ${picked === idea ? "used" : ""} ${
-                  picked && picked !== idea ? "muted" : ""
-                }`}
-                disabled={Boolean(picked)}
-                onClick={() => {
-                  if (picked) return;
-                  onIdea?.(idea);
-                }}
-                title={picked ? "已经选了上面那条" : "点一下就按这个开工"}
-              >
-                {idea}
-              </button>
-            ))}
+            {picked
+              ? ev.suggestions.map((idea) => (
+                  <span
+                    key={idea}
+                    className={`decline-idea-static ${idea === picked ? "chosen" : ""}`}
+                  >
+                    {idea}
+                  </span>
+                ))
+              : ev.suggestions.map((idea) => (
+                  <button
+                    key={idea}
+                    className="decline-idea"
+                    onClick={() => onIdea?.(idea)}
+                    title="点一下就按这个开工"
+                  >
+                    {idea}
+                  </button>
+                ))}
           </div>
         )}
       </div>

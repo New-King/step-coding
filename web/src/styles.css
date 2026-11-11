@@ -1729,3 +1729,19 @@ button {
   border-color: var(--line);
   background: transparent;
 }
+
+/* 选过之后就是一行字，不是按钮 */
+.decline-idea-static {
+  font-size: 10.5px;
+  color: var(--faint);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  line-height: 1.5;
+}
+
+.decline-idea-static.chosen {
+  color: var(--ink);
+  border-color: var(--line);
+  background: #fff;
+}
