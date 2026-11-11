@@ -30,7 +30,8 @@ type Event =
   | { action: "delete"; path: string; label: string }
   | { action: "error"; text: string }
   | { action: "finish"; text: string }
-  | { action: "decline"; text: string; suggestions: string[] };
+  | { action: "decline"; text: string; suggestions: string[] }
+  | { action: "user"; text: string; interrupt?: boolean };
 
 type Item = { id: number; kind: Event["action"]; ev: Event };
 
@@ -120,6 +121,7 @@ export default function App() {
   const filesRef = useRef<Record<string, string>>({});
   const roundRef = useRef(0);
   const startFilesRef = useRef<Record<string, string>>({});
+  const serverFilesRef = useRef<Record<string, string>>({});
   const itemsRef = useRef<Item[]>([]);
   const idRef = useRef(0);
   const pendingCardRef = useRef<number | null>(null);
@@ -153,6 +155,7 @@ export default function App() {
     p.onUpdate = (s) => setSnap(s);
     p.onFinish = () => {};
     p.onExhausted = () => {
+      filesRef.current = p.files();
       if (waitingRef.current) return;
       void nextRound();
     };
@@ -183,7 +186,7 @@ export default function App() {
     roundRef.current = 0;
     waitingRef.current = false;
     messagesRef.current = [{ role: "user", content: value }];
-    push({ action: "think", text: `开始处理：${value}` } as Event);
+    push({ action: "user", text: value } as Event);
 
     setRunning(true);
     runningRef.current = true;
@@ -206,7 +209,9 @@ export default function App() {
       });
       roundRef.current += 1;
       messagesRef.current = res.messages;
-      if (res.files) filesRef.current = res.files;
+      // 服务端算好的结果先存着，播放完再以播放器为准同步，
+      // 否则 edit 会被应用两次（第二次找不到原文就往末尾追加）
+      if (res.files) serverFilesRef.current = res.files;
 
       await handle(res.event as Event);
     } catch (e) {
@@ -316,6 +321,23 @@ export default function App() {
   /** 把一次文件动作演出来，演完继续循环。 */
   const playEvent = (ev: Extract<Event, { action: "write" | "edit" | "delete" }>) => {
     const p = playerRef.current!;
+
+    if (ev.action === "edit") {
+      const before = filesRef.current[ev.path] ?? "";
+      if (!before.includes(ev.find)) {
+        // 原文对不上：不要往末尾硬加，直接用服务端算好的内容
+        const truth = serverFilesRef.current[ev.path];
+        note("edit.mismatch", `${ev.path} 里没找到原文，改用服务端结果`);
+        if (typeof truth === "string") {
+          const fixed = { ...filesRef.current, [ev.path]: truth };
+          filesRef.current = fixed;
+          p.setBuffers(fixed);
+          setSnap((prev) => ({ ...prev, active: ev.path }));
+        }
+        window.setTimeout(() => void nextRound(), 240);
+        return;
+      }
+    }
     const files: Record<string, string> = { ...filesRef.current };
     files[ev.path] = files[ev.path] ?? "";
 
@@ -390,7 +412,7 @@ export default function App() {
   const answerAsk = async (value: string) => {
     const text = value.trim();
     if (!text || !asking) return;
-    push({ action: "think", text: `你选了：${text}` } as Event);
+    push({ action: "user", text } as Event);
     messagesRef.current = [
       ...messagesRef.current,
       { role: "user", content: text },
@@ -414,9 +436,8 @@ export default function App() {
     }
 
     if (runningRef.current) {
-      // 运行中插话：等这一轮结束再继续，先把话记进上下文
       messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
-      push({ action: "think", text: `（插话）${value}` } as Event);
+      push({ action: "user", text: value, interrupt: true } as Event);
       return;
     }
 
@@ -426,7 +447,7 @@ export default function App() {
     }
 
     messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
-    push({ action: "think", text: `（补充）${value}` } as Event);
+    push({ action: "user", text: value } as Event);
     setRunning(true);
     runningRef.current = true;
     await nextRound();
@@ -784,7 +805,6 @@ export default function App() {
             )}
 
             {running && !asking && <div className="bubble assistant typing">…</div>}
-            {error && <div className="bubble error">{error}</div>}
           </div>
           <div className="chat-foot">{composer(asking ? "回答上面的问题，或直接写…" : "可以随时插话")}</div>
         </aside>
@@ -842,6 +862,15 @@ function countLines(files: Record<string, string>) {
 
 function TimelineItem({ item, live }: { item: Item; live?: boolean }) {
   const ev = item.ev;
+
+  if (ev.action === "user") {
+    return (
+      <div className="tl user">
+        {ev.interrupt && <span className="user-tag">插话</span>}
+        <span>{ev.text}</span>
+      </div>
+    );
+  }
 
   if (ev.action === "think") {
     return <div className="tl think">{ev.text}</div>;

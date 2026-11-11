@@ -119,6 +119,14 @@ export class Player {
     this.timer = null;
   }
 
+  /** 直接设定缓冲区内容（外部校正时用，不播放）。 */
+  setBuffers(files: Record<string, string>) {
+    this.buffers = { ...files };
+    this.pending = "";
+    this.pendingPath = "";
+    this.emit();
+  }
+
   /** 立刻把剩下的步骤全部应用完（打断时用，保证文件是完整的）。 */
   finishNow() {
     this.stop();
