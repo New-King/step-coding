@@ -36,6 +36,7 @@ type Event =
 type Item = { id: number; kind: Event["action"]; ev: Event };
 
 type HistoryItem = {
+  id: string;
   title: string;
   summary: string;
   items: Item[];
@@ -97,7 +98,10 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-      return Array.isArray(raw) ? raw.filter((x) => Array.isArray(x?.items)) : [];
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter((x) => Array.isArray(x?.items))
+        .map((x, i) => ({ ...x, id: x.id ?? `legacy-${i}` }));
     } catch {
       return [];
     }
@@ -125,6 +129,7 @@ export default function App() {
   const serverFilesRef = useRef<Record<string, string>>({});
   const itemsRef = useRef<Item[]>([]);
   const idRef = useRef(0);
+  const sessionIdRef = useRef("");
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runningRef = useRef(false);
@@ -184,6 +189,7 @@ export default function App() {
     idRef.current = 0;
     filesRef.current = {};
     startFilesRef.current = {};
+    sessionIdRef.current = `s-${Date.now()}`;
     roundRef.current = 0;
     waitingRef.current = false;
     messagesRef.current = [{ role: "user", content: value }];
@@ -401,17 +407,16 @@ export default function App() {
       base: startFilesRef.current,
       files,
     };
-    // 用"文件集合"认项目：同一批文件来回改，只更新那一条记录，不新增
-    const sig = Object.keys(files).sort().join("|");
+    // 一次操作 = 一个项目：按会话 id 认，增删文件都还是同一条
+    const sid = sessionIdRef.current || `s-${Date.now()}`;
+    sessionIdRef.current = sid;
 
     setHistory((prev) => {
-      const same = prev.findIndex(
-        (x) => Object.keys(x.files).sort().join("|") === sig
-      );
+      const same = prev.findIndex((x) => x.id === sid);
       const merged =
         same >= 0
-          ? { ...item, title: prev[same].title || item.title, updatedAt: Date.now() }
-          : { ...item, updatedAt: Date.now() };
+          ? { ...item, id: sid, title: prev[same].title || item.title, updatedAt: Date.now() }
+          : { ...item, id: sid, updatedAt: Date.now() };
       const rest = prev.filter((_, i) => i !== same);
       const next = [merged, ...rest].slice(0, 6);
       try {
@@ -695,6 +700,7 @@ export default function App() {
                   className="history-item"
                   onClick={() => {
                     setStarted(true);
+                    sessionIdRef.current = item.id;
                     setItems(item.items);
                     itemsRef.current = item.items;
                     filesRef.current = item.files;
