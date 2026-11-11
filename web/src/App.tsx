@@ -34,7 +34,28 @@ type Event =
   | { action: "decline"; text: string; suggestions: string[] }
   | { action: "user"; text: string; interrupt?: boolean };
 
-type Item = { id: number; kind: Event["action"]; ev: Event; picked?: string };
+type Item = {
+  id: number;
+  kind: Event["action"];
+  ev: Event;
+  picked?: string;
+  at?: number;
+  ms?: number;
+};
+
+type SavedSession = {
+  id: string;
+  items: Item[];
+  files: Record<string, string>;
+  messages: { role: string; content: string }[];
+  round: number;
+  pending: { question: string; options: string[] }[] | null;
+  askIndex: number;
+  askAnswers: string[];
+  status: "running" | "paused" | "waiting" | "done";
+  started: boolean;
+  savedAt: number;
+};
 
 type HistoryItem = {
   id: string;
@@ -65,6 +86,7 @@ const EXAMPLES: { label: string; ask: string }[] = [
 ];
 
 const HISTORY_KEY = "stepcoding.history.v2";
+const SESSION_KEY = "stepcoding.session.v1";
 const MAX_ROUNDS = 20;
 
 function langOf(name: string) {
@@ -96,6 +118,7 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [started, setStarted] = useState(false);
+  const [resumable, setResumable] = useState<SavedSession | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -122,7 +145,10 @@ export default function App() {
   });
   const [copied, setCopied] = useState(false);
   const [peek, setPeek] = useState<string | null>(null);
-  const [traceOpen, setTraceOpen] = useState(false);
+  const [traceQuery, setTraceQuery] = useState("");
+  const [traceOpen, setTraceOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("trace") === "1"
+  );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
 
   const messagesRef = useRef<{ role: string; content: string }[]>([]);
@@ -134,6 +160,9 @@ export default function App() {
   const idRef = useRef(0);
   const sessionIdRef = useRef("");
   const answeringRef = useRef(false);
+  const pausedRef = useRef(false);
+  const blockedRef = useRef(false);
+  const lastMsRef = useRef(0);
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runningRef = useRef(false);
@@ -145,6 +174,37 @@ export default function App() {
   const codeRef = useRef<HTMLDivElement | null>(null);
   const logStickRef = useRef(true);
   const codeStickRef = useRef(true);
+
+  /** 拍一张当前现场的快照 */
+  const snapshot = (): SavedSession => ({
+    id: sessionIdRef.current,
+    items: itemsRef.current,
+    files: filesRef.current,
+    messages: messagesRef.current,
+    round: roundRef.current,
+    pending,
+    askIndex,
+    askAnswers,
+    status: pausedRef.current
+      ? "paused"
+      : runningRef.current
+        ? "running"
+        : waitingRef.current
+          ? "waiting"
+          : "done",
+    started,
+    savedAt: Date.now(),
+  });
+
+  /** 把现场存下来：刷新/返回后能接着干。 */
+  const saveSession = () => {
+    if (!sessionIdRef.current) return;
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(snapshot()));
+    } catch {
+      /* 存不下就算 */
+    }
+  };
 
   const note = (tag: string, text: string) => {
     const entry = { t: Date.now(), tag, text };
@@ -160,10 +220,17 @@ export default function App() {
     setItems(itemsRef.current);
   };
 
-  const push = (ev: Event) => {
-    const item: Item = { id: (idRef.current += 1), kind: ev.action, ev };
+  const push = (ev: Event, extra: { ms?: number } = {}) => {
+    const item: Item = {
+      id: (idRef.current += 1),
+      kind: ev.action,
+      ev,
+      at: Date.now(),
+      ...extra,
+    };
     itemsRef.current = [...itemsRef.current, item];
     setItems(itemsRef.current);
+    saveSession();
   };
 
   useEffect(() => {
@@ -177,8 +244,21 @@ export default function App() {
       void nextRound();
     };
 
+    let hasSaved = false;
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      const saved = raw ? (JSON.parse(raw) as SavedSession) : null;
+      if (saved && Array.isArray(saved.items) && saved.items.length > 0) {
+        setResumable(saved);
+        hasSaved = true;
+      }
+    } catch {
+      /* 读不出来就算了 */
+    }
+
+    // 有现场就别用 ?q= 重开一轮，否则会把现场覆盖掉
     const q = new URLSearchParams(window.location.search).get("q");
-    if (q) window.setTimeout(() => void start(q), 80);
+    if (q && !hasSaved) window.setTimeout(() => void start(q), 80);
 
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -194,6 +274,10 @@ export default function App() {
     setStarted(true);
     setError(null);
     setPending(null);
+
+    if (new URLSearchParams(window.location.search).has("q")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+    }
     setDeclined(null);
     setItems([]);
     itemsRef.current = [];
@@ -214,11 +298,17 @@ export default function App() {
 
   const nextRound = async (pendingSearch = "") => {
     if (!runningRef.current || waitingRef.current) return;
+    if (pausedRef.current) {
+      blockedRef.current = true;
+      note("pause", "已暂停，先不请求下一步");
+      return;
+    }
     if (roundRef.current >= MAX_ROUNDS) {
       finish("步数到上限，先停在这里。");
       return;
     }
 
+    const t0 = Date.now();
     try {
       const res = await postJson("/api/step", {
         messages: messagesRef.current,
@@ -226,6 +316,7 @@ export default function App() {
         round: roundRef.current,
         pending_search: pendingSearch,
       });
+      lastMsRef.current = Date.now() - t0;
       roundRef.current += 1;
       messagesRef.current = res.messages;
       // 服务端算好的结果先存着，播放完再以播放器为准同步，
@@ -244,13 +335,18 @@ export default function App() {
     }
   };
 
+  const pushStep = (ev: Event) => {
+    push(ev, { ms: lastMsRef.current });
+    lastMsRef.current = 0;
+  };
+
   const handle = async (ev: Event) => {
     note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
 
     if (ev.action === "search") {
       if (!ev.results) {
         // 第一段：先把"正在搜"挂出来，再去抓结果
-        push(ev);
+        pushStep(ev);
         pendingCardRef.current = itemsRef.current[itemsRef.current.length - 1].id;
         window.setTimeout(() => void nextRound(ev.query), 60);
         return;
@@ -262,20 +358,20 @@ export default function App() {
         itemsRef.current = itemsRef.current.map((it) => (it.id === id ? { ...it, ev } : it));
         setItems(itemsRef.current);
       } else {
-        push(ev);
+        pushStep(ev);
       }
       window.setTimeout(() => void nextRound(), 260);
       return;
     }
 
     if (ev.action === "think" || ev.action === "look" || ev.action === "plan") {
-      push(ev);
+      pushStep(ev);
       window.setTimeout(() => void nextRound(), ev.action === "plan" ? 700 : 350);
       return;
     }
 
     if (ev.action === "ask") {
-      push(ev);
+      pushStep(ev);
       if (Object.keys(filesRef.current).length > 0) remember(filesRef.current);
       setPending(ev.questions);
       setAskIndex(0);
@@ -288,20 +384,20 @@ export default function App() {
     }
 
     if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
-      push(ev);
+      pushStep(ev);
       playEvent(ev);
       return;
     }
 
     if (ev.action === "error") {
-      push(ev);
+      pushStep(ev);
       window.setTimeout(() => void nextRound(), 400);
       return;
     }
 
     if (ev.action === "say") {
       stopRun();
-      push(ev);
+      pushStep(ev);
       window.setTimeout(() => composerRef.current?.focus(), 60);
       return;
     }
@@ -310,13 +406,13 @@ export default function App() {
       stopRun();
       setPending(null);
       // 一律留在当前界面，把话说清楚，不要把人弹到一个看不见的地方
-      push(ev);
+      pushStep(ev);
       setDeclined(ev);
       return;
     }
 
     if (ev.action === "finish") {
-      push(ev);
+      pushStep(ev);
       finish(ev.text);
       return;
     }
@@ -498,16 +594,89 @@ export default function App() {
     await nextRound();
   };
 
+  /** 从上次的现场接着干 */
+  const resume = () => {
+    const saved = resumable;
+    if (!saved) return;
+
+    setStarted(true);
+    setResumable(null);
+    sessionIdRef.current = saved.id;
+    itemsRef.current = saved.items;
+    setItems(saved.items);
+    filesRef.current = saved.files;
+    messagesRef.current = saved.messages ?? [];
+    roundRef.current = saved.round ?? 0;
+    idRef.current = saved.items.reduce((m, i) => Math.max(m, i.id), 0);
+    setError(null);
+
+    playerRef.current!.setBuffers(saved.files);
+    setSnap((prev) => ({ ...prev, buffers: saved.files, active: Object.keys(saved.files)[0] ?? null }));
+
+    if (saved.pending?.length) {
+      setPending(saved.pending);
+      setAskIndex(saved.askIndex ?? 0);
+      setAskAnswers(saved.askAnswers ?? []);
+      waitingRef.current = true;
+      setRunning(false);
+      runningRef.current = false;
+      note("resume", "恢复到待回答");
+      return;
+    }
+
+    waitingRef.current = false;
+    setPending(null);
+
+    if (saved.status === "running" || saved.status === "paused") {
+      pausedRef.current = false;
+      blockedRef.current = false;
+      playerRef.current!.paused = false;
+      setPaused(false);
+      setRunning(true);
+      runningRef.current = true;
+      note("resume", "接着跑");
+      void nextRound();
+    } else {
+      setRunning(false);
+      runningRef.current = false;
+      note("resume", "恢复到已完成");
+    }
+  };
+
   const stopRun = () => {
     runningRef.current = false;
     setRunning(false);
     note("stop", "手动停止");
   };
 
-  const reset = () => {
+  /** 返回首页：停下手上的活，但把现场留着，回来可以继续 */
+  const goHome = () => {
+    playerRef.current!.stop();
+    playerRef.current!.paused = true;
+    pausedRef.current = true;
+    stopRun();
+    const snap = snapshot();
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ ...snap, status: "paused" }));
+    } catch {
+      /* 忽略 */
+    }
+    setResumable({ ...snap, status: "paused" });
+    setStarted(false);
+  };
+
+  /** 真正清空：只在首页用 */
+  const clearAll = () => {
     playerRef.current!.stop();
     playerRef.current!.paused = false;
+    pausedRef.current = false;
     stopRun();
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* 忽略 */
+    }
+    setResumable(null);
     setStarted(false);
     setSnap(EMPTY);
     setItems([]);
@@ -517,12 +686,23 @@ export default function App() {
     filesRef.current = {};
     messagesRef.current = [];
     roundRef.current = 0;
+    sessionIdRef.current = "";
   };
 
   const togglePause = () => {
     const p = playerRef.current!;
-    p.paused = !p.paused;
-    setPaused(p.paused);
+    const next = !p.paused;
+    p.paused = next;
+    pausedRef.current = next;
+    setPaused(next);
+    note(next ? "pause" : "resume", next ? "暂停" : "继续");
+
+    if (!next && blockedRef.current) {
+      blockedRef.current = false;
+      setRunning(true);
+      runningRef.current = true;
+      void nextRound();
+    }
   };
 
   const replay = () => {
@@ -684,6 +864,24 @@ export default function App() {
             </div>
             {composer("说一句…")}
 
+            {resumable && (
+              <div className="resume-card">
+                <div className="resume-title">上次没做完</div>
+                <div className="resume-text">
+                  {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
+                    ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
+                    : "一个项目"}
+                  <span className="resume-meta">
+                    {resumable.items.length} 步 · {timeAgo(resumable.savedAt)}
+                  </span>
+                </div>
+                <div className="resume-actions">
+                  <button className="primary" onClick={resume}>接着做</button>
+                  <button className="ghost" onClick={clearAll}>不要了</button>
+                </div>
+              </div>
+            )}
+
             {declined && (
               <div className="decline-card">
                 <div className="decline-text">{declined.text}</div>
@@ -789,7 +987,7 @@ export default function App() {
         <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
           日志{logs.length > 0 ? ` ${logs.length}` : ""}
         </button>
-        <button className="ghost" onClick={reset}>清空</button>
+        <button className="ghost" onClick={goHome}>返回</button>
       </header>
 
       <main className="workspace">
@@ -946,39 +1144,108 @@ export default function App() {
       {traceOpen && (
         <div className="trace">
           <div className="trace-head">
-            <span>运行日志</span>
-            <button
-              className="trace-copy"
-              onClick={() => {
-                const text = logs
-                  .map((l) => `${new Date(l.t).toLocaleTimeString()}  ${l.tag}  ${l.text}`)
-                  .join("\n");
-                void navigator.clipboard.writeText(text);
-              }}
-            >
-              复制
-            </button>
-            <button className="trace-close" onClick={() => setTraceOpen(false)}>×</button>
+            <span>轨迹 · {items.length} 步</span>
+            <input
+              className="trace-search"
+              placeholder="搜动作、文件、报错…"
+              value={traceQuery}
+              onChange={(e) => setTraceQuery(e.target.value)}
+            />
+            <button className="trace-copy" onClick={() => setTraceOpen(false)}>×</button>
           </div>
           <div className="trace-body">
-            {logs.length === 0 ? (
-              <div className="trace-empty">还没有记录</div>
-            ) : (
-              logs.map((l, i) => (
-                <div key={i} className="trace-line">
-                  <span className="trace-time">
+            {items
+              .filter((it) => {
+                if (!traceQuery.trim()) return true;
+                const hay = JSON.stringify(it.ev) + (it.ms ?? "");
+                return hay.toLowerCase().includes(traceQuery.trim().toLowerCase());
+              })
+              .map((it, i) => {
+                const ev = it.ev;
+                const time = it.at
+                  ? new Date(it.at).toLocaleTimeString("zh-CN", { hour12: false })
+                  : "";
+                const bad = ev.action === "error" || ev.action === "decline";
+                return (
+                  <div key={it.id} className={`trace-row ${bad ? "bad" : ""}`}>
+                    <span className="tr-index">{i + 1}</span>
+                    <span className="tr-time">{time}</span>
+                    <span className={`tr-tag ${ev.action}`}>{labelOf(ev.action)}</span>
+                    <span className="tr-detail">{describeEvent(ev)}</span>
+                    {it.ms ? <span className="tr-ms">{it.ms}ms</span> : null}
+                  </div>
+                );
+              })}
+
+            {logs.filter((l) => !traceQuery.trim() || l.text.includes(traceQuery)).length > 0 && (
+              <div className="trace-sub">运行记录</div>
+            )}
+            {logs
+              .filter((l) => !traceQuery.trim() || l.text.includes(traceQuery))
+              .slice(-40)
+              .map((l, i) => (
+                <div key={i} className="trace-row muted">
+                  <span className="tr-index">·</span>
+                  <span className="tr-time">
                     {new Date(l.t).toLocaleTimeString("zh-CN", { hour12: false })}
                   </span>
-                  <span className="trace-tag">{l.tag}</span>
-                  <span className="trace-text">{l.text}</span>
+                  <span className="tr-tag">{l.tag}</span>
+                  <span className="tr-detail">{l.text}</span>
                 </div>
-              ))
-            )}
+              ))}
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function labelOf(action: string) {
+  const map: Record<string, string> = {
+    think: "思考",
+    look: "查看",
+    search: "搜索",
+    plan: "计划",
+    ask: "提问",
+    say: "回话",
+    write: "新建",
+    edit: "修改",
+    delete: "删除",
+    finish: "完成",
+    decline: "拒绝",
+    error: "出错",
+    user: "你",
+  };
+  return map[action] ?? action;
+}
+
+function describeEvent(ev: Event): string {
+  switch (ev.action) {
+    case "think":
+    case "say":
+    case "finish":
+    case "decline":
+      return ev.text;
+    case "look":
+      return ev.path || "项目根目录";
+    case "search":
+      return ev.query;
+    case "plan":
+      return ev.steps.join(" · ");
+    case "ask":
+      return ev.questions.map((q) => q.question).join(" / ");
+    case "write":
+    case "edit":
+      return `${ev.path} — ${ev.label}`;
+    case "delete":
+      return `${ev.path} — ${ev.label}`;
+    case "error":
+      return ev.text;
+    case "user":
+      return ev.text;
+    default:
+      return "";
+  }
 }
 
 function hostOf(url: string) {

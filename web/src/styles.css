@@ -1745,3 +1745,160 @@ button {
   border-color: var(--line);
   background: #fff;
 }
+
+/* ---- 上次没做完 ---- */
+.resume-card {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.resume-title {
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.resume-text {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resume-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.resume-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.resume-actions .primary,
+.resume-actions .ghost {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* ---- 轨迹面板 ---- */
+.trace {
+  width: 620px;
+  max-height: 58vh;
+  background: #161618;
+}
+
+.trace-head {
+  gap: 12px;
+}
+
+.trace-search {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8e8ed;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.trace-search::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.trace-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.78);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.trace-row.bad {
+  color: #ff8a80;
+}
+
+.trace-row.muted {
+  opacity: 0.55;
+  font-size: 11px;
+}
+
+.tr-index {
+  width: 20px;
+  flex: 0 0 20px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.3);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-time {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-tag {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.tr-tag.write,
+.tr-tag.edit,
+.tr-tag.delete {
+  background: rgba(120, 170, 255, 0.18);
+  color: #9dc0ff;
+}
+
+.tr-tag.error,
+.tr-tag.decline {
+  background: rgba(255, 110, 100, 0.2);
+  color: #ff9b93;
+}
+
+.tr-tag.user {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.tr-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tr-ms {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-sub {
+  margin: 10px 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
