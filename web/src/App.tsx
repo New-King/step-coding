@@ -208,9 +208,17 @@ export default function App() {
   const handle = async (ev: Event) => {
     note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
 
-    if (ev.action === "think" || ev.action === "look" || ev.action === "plan") {
+    if (
+      ev.action === "think" ||
+      ev.action === "look" ||
+      ev.action === "search" ||
+      ev.action === "plan"
+    ) {
       push(ev);
-      window.setTimeout(() => void nextRound(), ev.action === "plan" ? 700 : 350);
+      window.setTimeout(
+        () => void nextRound(),
+        ev.action === "plan" ? 700 : ev.action === "search" ? 500 : 350
+      );
       return;
     }
 
@@ -239,7 +247,13 @@ export default function App() {
     if (ev.action === "finish") {
       push(ev);
       finish(ev.text);
+      return;
     }
+
+    // 兜底：没识别的动作也不能让循环停住
+    note("loop.unknown", JSON.stringify(ev).slice(0, 120));
+    push({ action: "error", text: `不认识的动作：${ev.action}` } as Event);
+    window.setTimeout(() => void nextRound(), 400);
   };
 
   /** 把一次文件动作演出来，演完继续循环。 */

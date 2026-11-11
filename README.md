@@ -72,23 +72,33 @@
 
 运行中随时可以插话，话会进上下文，下一轮生效。
 
-## 联网搜索（可选）
+## 联网搜索
 
-没配 key 时这条链路整体关闭，agent 也不会调 `search`。
+默认用 **DeepSeek 自研 Search API**，和模型同一个 key，不用再注册别家：
+
+```
+POST https://api.deepseek.com/v1/tools/search
+{ "query": "...", "count": 5, "need_content": false }
+```
+
+**¥5 / 1000 次成功请求**；失败、无结果、超时都不计费（[官方文档](https://api-docs.deepseek.com/zh-cn/guides/search)）。
+
+也可以用别的后端，改环境变量即可：
 
 ```bash
-# .env
-SEARCH_PROVIDER=serper        # 或 bocha
+SEARCH_PROVIDER=deepseek   # 默认，用 DEEPSEEK_API_KEY
+SEARCH_PROVIDER=serper     # 2500 次免费，之后 $1/千次
+SEARCH_PROVIDER=bocha      # 国内直连，约 ¥5/千次
 SEARCH_API_KEY=...
 ```
 
-| 服务 | 价格 | 说明 |
-|---|---|---|
-| serper | 2500 次免费（6 个月），之后 $1/千次 | Google 结果，注册不用卡 |
-| bocha | 约 ¥5/千次（以官网为准） | 国内直连，延迟低 |
+没配 key 时整条链路关闭，prompt 里也会告诉模型"没有搜索能力，不要用 search"。
 
-配好之后，遇到"这个 API 怎么用"这类问题，它会先 `search`，把结果放进上下文再动手，
-搜索过程出现在右侧时间线里。
+查到的东西会进上下文，然后再决定怎么做。比如让它写一个调搜索接口的页面：
+
+![搜索](docs/31-search.png)
+
+它会搜两次、发现"浏览器直连会暴露 key 且有 CORS"，然后停下来问你要哪种跑法。
 
 ## 出错怎么查
 
