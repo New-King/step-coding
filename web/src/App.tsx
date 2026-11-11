@@ -34,7 +34,7 @@ type Event =
   | { action: "decline"; text: string; suggestions: string[] }
   | { action: "user"; text: string; interrupt?: boolean };
 
-type Item = { id: number; kind: Event["action"]; ev: Event };
+type Item = { id: number; kind: Event["action"]; ev: Event; picked?: string };
 
 type HistoryItem = {
   id: string;
@@ -133,6 +133,8 @@ export default function App() {
   const itemsRef = useRef<Item[]>([]);
   const idRef = useRef(0);
   const sessionIdRef = useRef("");
+  const answeringRef = useRef(false);
+  const clickedRef = useRef<Set<number>>(new Set());
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runningRef = useRef(false);
@@ -150,6 +152,13 @@ export default function App() {
     logsRef.current = [...logsRef.current.slice(-199), entry];
     setLogs(logsRef.current);
     console.info(`[step-coding] ${tag} · ${text}`);
+  };
+
+  const markUsed = (id: number, idea: string) => {
+    itemsRef.current = itemsRef.current.map((it) =>
+      it.id === id ? { ...it, picked: idea } : it
+    );
+    setItems(itemsRef.current);
   };
 
   const push = (ev: Event) => {
@@ -189,6 +198,7 @@ export default function App() {
     setDeclined(null);
     setItems([]);
     itemsRef.current = [];
+    clickedRef.current = new Set();
     idRef.current = 0;
     filesRef.current = {};
     startFilesRef.current = {};
@@ -200,6 +210,7 @@ export default function App() {
 
     setRunning(true);
     runningRef.current = true;
+    answeringRef.current = false;
     await nextRound();
   };
 
@@ -430,7 +441,8 @@ export default function App() {
 
   const answerAsk = async (value: string) => {
     const text = value.trim();
-    if (!text || !pending) return;
+    if (!text || !pending || answeringRef.current) return;
+    answeringRef.current = true;
 
     const next = [...askAnswers, text];
     setAnswer("");
@@ -438,6 +450,7 @@ export default function App() {
     if (askIndex + 1 < pending.length) {
       setAskAnswers(next);
       setAskIndex(askIndex + 1);
+      answeringRef.current = false;
       window.setTimeout(() => composerRef.current?.focus(), 40);
       return;
     }
@@ -860,7 +873,13 @@ export default function App() {
                 key={item.id}
                 item={item}
                 live={item.ev.action === "ask" && pending === item.ev.questions}
-                onIdea={(text) => void send(text)}
+                onIdea={(text) => {
+                  // 同步挡住连点：disabled 要等下一次渲染才生效
+                  if (clickedRef.current.has(item.id)) return;
+                  clickedRef.current.add(item.id);
+                  markUsed(item.id, text);
+                  void send(text);
+                }}
               />
             ))}
 
@@ -997,6 +1016,7 @@ function TimelineItem({
   live?: boolean;
   onIdea?: (text: string) => void;
 }) {
+  const picked = item.picked;
   const ev = item.ev;
 
   if (ev.action === "user") {
@@ -1123,9 +1143,15 @@ function TimelineItem({
             {ev.suggestions.map((idea) => (
               <button
                 key={idea}
-                className="decline-idea"
-                onClick={() => onIdea?.(idea)}
-                title="点一下就按这个开工"
+                className={`decline-idea ${picked === idea ? "used" : ""} ${
+                  picked && picked !== idea ? "muted" : ""
+                }`}
+                disabled={Boolean(picked)}
+                onClick={() => {
+                  if (picked) return;
+                  onIdea?.(idea);
+                }}
+                title={picked ? "已经选了上面那条" : "点一下就按这个开工"}
               >
                 {idea}
               </button>

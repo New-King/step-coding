@@ -1703,3 +1703,29 @@ button {
   border-color: var(--ink);
   background: #fff;
 }
+
+.decline-idea.used {
+  color: var(--faint);
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+  text-decoration: line-through;
+}
+
+.decline-idea:disabled:hover {
+  color: var(--faint);
+  border-color: transparent;
+  background: transparent;
+}
+
+.decline-idea.muted {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.decline-idea.muted:hover {
+  opacity: 0.45;
+  color: var(--muted);
+  border-color: var(--line);
+  background: transparent;
+}
