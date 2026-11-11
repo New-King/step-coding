@@ -257,6 +257,7 @@ export default function App() {
 
     if (ev.action === "ask") {
       push(ev);
+      if (Object.keys(filesRef.current).length > 0) remember(filesRef.current);
       setAsking(ev);
       waitingRef.current = true;
       setRunning(false);
@@ -385,9 +386,12 @@ export default function App() {
   };
 
   const remember = (files: Record<string, string>) => {
+    const firstUser = itemsRef.current.find(
+      (i) => i.kind === "user" && i.ev.action === "user"
+    );
     const title =
-      itemsRef.current.find((i) => i.kind === "plan")?.ev.action === "plan"
-        ? "最近一次"
+      firstUser && firstUser.ev.action === "user"
+        ? firstUser.ev.text.slice(0, 26)
         : "最近一次";
     const item: HistoryItem = {
       title,
@@ -397,7 +401,7 @@ export default function App() {
       files,
     };
     setHistory((prev) => {
-      const next = [item, ...prev].slice(0, 6);
+      const next = [item, ...prev.filter((x) => x.title !== item.title)].slice(0, 6);
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
       } catch {
@@ -657,6 +661,45 @@ export default function App() {
             {error && <div className="ask-error">{error}</div>}
           </div>
         </div>
+
+        {history.length > 0 && (
+          <section className="ask-history">
+            <div className="history-title">
+              <span>最近</span>
+              <button
+                className="history-clear"
+                onClick={() => {
+                  localStorage.removeItem(HISTORY_KEY);
+                  setHistory([]);
+                }}
+              >
+                清空
+              </button>
+            </div>
+            <div className="history-list">
+              {history.map((item, i) => (
+                <button
+                  key={i}
+                  className="history-item"
+                  onClick={() => {
+                    setStarted(true);
+                    setItems(item.items);
+                    itemsRef.current = item.items;
+                    filesRef.current = item.files;
+                    startFilesRef.current = item.base ?? {};
+                    playerRef.current!.setBuffers(item.files);
+                    setDeclined(null);
+                  }}
+                >
+                  <span className="hi-title">{item.title || "最近一次"}</span>
+                  <span className="hi-meta">
+                    {Object.keys(item.files).length} 个文件 · {countLines(item.files)} 行
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     );
   }
