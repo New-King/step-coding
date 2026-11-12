@@ -526,6 +526,46 @@ def _record(
     return out
 
 
+REPEAT_THRESHOLDS = (3, 5, 8)
+
+GENTLE = (
+    "你连续三次调用了完全相同的工具和参数。先仔细看上一次的结果再决定下一步；"
+    "如果这件事已经做完，直接 finish。"
+)
+FIRM = (
+    "同一个调用已经重复五次了。换一种做法，或者直接 finish——重复不会让结果变好。"
+)
+
+
+def _call_key(message: dict[str, Any]) -> str | None:
+    calls = message.get("tool_calls") or []
+    if not calls:
+        return None
+    fn = calls[0].get("function") or {}
+    args = _loads(fn.get("arguments") or "{}")
+    return f"{fn.get('name','')}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
+
+
+def _repeat_streak(messages: list[dict[str, Any]]) -> int:
+    """从末尾往前数，连续多少次是完全相同的工具调用。"""
+    streak = 0
+    last: str | None = None
+    for m in reversed(messages):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        key = _call_key(m)
+        if key is None:
+            continue
+        if last is None:
+            last = key
+            streak = 1
+        elif key == last:
+            streak += 1
+        else:
+            break
+    return streak if last else 0
+
+
 def step(
     messages: list[dict[str, Any]],
     files: dict[str, str],
@@ -556,17 +596,17 @@ def step(
     )
     system = {"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}
 
-    # 熔断：连续三次完全相同的工具调用
-    recent = [
-        json.dumps(m.get("tool_calls"), ensure_ascii=False)
-        for m in messages[-8:]
-        if m.get("role") == "assistant" and m.get("tool_calls")
-    ]
-    if len(recent) >= 3 and len(set(recent[-3:])) == 1:
+    # 重复调用：按 3 / 5 / 8 分级处理，先提醒，实在停不下来才收尾
+    streak = _repeat_streak(messages)
+    if streak >= REPEAT_THRESHOLDS[2]:
         return {
-            "event": {"action": "finish", "text": "这一步重复了三次，先停在这里。"},
+            "event": {"action": "finish", "text": "同一个动作重复太多次了，先停在这里。"},
             "messages": messages,
         }
+    if streak == REPEAT_THRESHOLDS[0]:
+        messages = messages + [{"role": "user", "content": GENTLE}]
+    elif streak == REPEAT_THRESHOLDS[1]:
+        messages = messages + [{"role": "user", "content": FIRM}]
 
     action, assistant, call = _call([system, *messages])
 
