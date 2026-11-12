@@ -1136,8 +1136,11 @@ export default function App() {
             {running && !pending && <div className="bubble assistant typing">…</div>}
           </div>
           <div className="chat-foot">
-        {composer(pending ? "回答上面的问题，或直接写…" : "可以随时插话")}
-      </div>
+            {!running && !pending && items.length > 0 && (
+              <div className="idle-hint">轮到你了 · 接着说一句就继续</div>
+            )}
+            {composer(pending ? "回答上面的问题，或直接写…" : "可以随时插话")}
+          </div>
         </aside>
       </main>
 
