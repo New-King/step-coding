@@ -27,6 +27,7 @@ from typing import Any
 
 from . import search
 from .fs import apply as apply_fs
+from .guards import GENTLE, FIRM, REPEAT_THRESHOLDS, claims_missing, repeat_streak
 from .tools import TOOL_NAME_TO_ACTION, TOOLS, loads
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -228,24 +229,6 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     return parsed2
 
 
-PATHISH = re.compile(r"[\w./-]+\.(?:js|mjs|html|css|py|go|ts|tsx|json|md|sh|rb|java|c|cpp)")
-
-
-def _claims_missing(text: str, files: dict[str, str]) -> list[str]:
-    """说了"我写了 a.js"，但项目里没有这个文件——这是假宣称。"""
-    missing = []
-    for raw in PATHISH.findall(text or ""):
-        name = raw.lstrip("./")
-        if not name:
-            continue
-        if name in files:
-            continue
-        if any(k.endswith("/" + name) or k == name for k in files):
-            continue
-        missing.append(name)
-    return missing
-
-
 def _tree(files: dict[str, str]) -> str:
     if not files:
         return "项目是空的，一个文件都没有。"
@@ -439,46 +422,6 @@ def _record(
     return out
 
 
-REPEAT_THRESHOLDS = (3, 5, 8)
-
-GENTLE = (
-    "你连续三次调用了完全相同的工具和参数。先仔细看上一次的结果再决定下一步；"
-    "如果这件事已经做完，直接 finish。"
-)
-FIRM = (
-    "同一个调用已经重复五次了。换一种做法，或者直接 finish——重复不会让结果变好。"
-)
-
-
-def _call_key(message: dict[str, Any]) -> str | None:
-    calls = message.get("tool_calls") or []
-    if not calls:
-        return None
-    fn = calls[0].get("function") or {}
-    args = loads(fn.get("arguments") or "{}")
-    return f"{fn.get('name','')}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
-
-
-def _repeat_streak(messages: list[dict[str, Any]]) -> int:
-    """从末尾往前数，连续多少次是完全相同的工具调用。"""
-    streak = 0
-    last: str | None = None
-    for m in reversed(messages):
-        if m.get("role") != "assistant" or not m.get("tool_calls"):
-            continue
-        key = _call_key(m)
-        if key is None:
-            continue
-        if last is None:
-            last = key
-            streak = 1
-        elif key == last:
-            streak += 1
-        else:
-            break
-    return streak if last else 0
-
-
 def step(
     messages: list[dict[str, Any]],
     files: dict[str, str],
@@ -510,7 +453,7 @@ def step(
     system = {"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}
 
     # 重复调用：按 3 / 5 / 8 分级处理，先提醒，实在停不下来才收尾
-    streak = _repeat_streak(messages)
+    streak = repeat_streak(messages)
     if streak >= REPEAT_THRESHOLDS[2]:
         return {
             "event": {"action": "finish", "text": "同一个动作重复太多次了，先停在这里。"},
@@ -527,7 +470,7 @@ def step(
         return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] in {"say", "finish"}:
-        missing = _claims_missing(action.get("text", ""), files)
+        missing = claims_missing(action.get("text", ""), files)
         if missing:
             demand = (
                 f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
