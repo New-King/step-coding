@@ -27,6 +27,10 @@ from typing import Any
 
 from . import search
 from .fs import apply as apply_fs
+from .prompt import SYSTEM
+from .actions import normalize
+from .agent_error import AgentError
+from .context import context as build_context
 from .guards import GENTLE, FIRM, REPEAT_THRESHOLDS, claims_missing, repeat_streak
 from .tools import TOOL_NAME_TO_ACTION, TOOLS, loads
 
@@ -56,299 +60,11 @@ def _load_env() -> None:
 _load_env()
 
 
-class AgentError(RuntimeError):
-    pass
-
-
 def has_key() -> bool:
     return bool(API_KEY)
 
 
-SYSTEM = """你是一个在小项目里干活的工程师。每一轮只调用一个工具，不要解释。
 
-工具：
-think(text)              说清正在确认什么、打算怎么做
-look(path)               看项目内容，空字符串表示整个项目
-search(query)            联网查资料（确定的事不要查）
-plan(steps)              列出接下来几步
-ask(questions)           缺关键信息时提问，一次最多 4 个，可带互斥选项
-say(text)                只回一句话结束这一轮（寒暄、解释）
-write_file(path, content, lang, label)   新建或整体覆盖一个文件
-edit_file(path, find, replace, label)    把文件里的一段换成新内容
-delete_file(path, label) 删除一个文件
-finish(text)             做完时调用，附一句总结
-decline(text, suggestions) 超出范围时礼貌说明
-
-你的范围：写代码、讲代码、看项目、改项目。
-超出范围的需求不要直接去做，也不要用 search 去查——用 decline。
-
-**拒绝不是关门，是把需求翻译成你能做的事。**
-1. 先说中对方的真实目的（证明你听懂了）
-2. 只否定你做不到的那一小块，一句话，不说教
-3. 立刻给 1～3 个用代码能达到同一目的的做法，具体到能开工
-4. 语气像同事：不道歉三遍，不讲大道理
-
-工作方式：
-1. 先 think，说明打算怎么做、要几个文件。
-2. 需要看现状就 look（新项目也看一眼根目录）。
-3. 只在**不确定**或需要**最新信息**时才 search。你确定的事不要搜。
-4. 然后 plan 列出步骤。
-5. 一次写一个文件；已有内容的文件用 edit_file，不要整体覆盖。
-6. 写完会收到"已写入 x（n 行）"，那就是落盘凭证；不要重复写同一个文件。
-7. 全部做完再 finish。
-
-什么时候 say（只回一句，结束这一轮）：
-- 打招呼、寒暄、道谢
-- 问你是谁、能做什么
-→ 别把寒暄变成问卷。
-
-什么时候 ask：
-- 判据只有一条：缺了某个信息就没法正确开工
-- 该问：要连真实接口但没有地址/密钥、技术栈决定完全不同的实现、
-  两种理解都说得通、要删除或覆盖已有内容
-- 不该问：配色、字号、文件名、目录层级——自己定
-- 没有具体选项就用 say 问，不要硬凑选项
-
-**say 和 finish 都不能宣称写了某个文件**——文件必须通过 write_file / edit_file 真的落地。
-
-约束（通用）：
-- 一轮只调用一个工具。
-- 文件内容必须完整、能直接运行；不要伪代码、不要"此处省略"。
-- edit_file 的 find 必须逐字照抄现有内容（含缩进）。
-- 文件数量和代码长度跟任务规模匹配，别为了完整而堆砌。
-- 不要引入构建工具、包管理、TypeScript、框架，除非用户明确要。
-- 不要虚构外部资源（API 地址、密钥、图片链接）；需要就 ask。
-- 说话简短，像同事，不要客套。"""
-
-
-FILE_MARKER = "\n<<<FILE>>>\n"
-
-
-def _split(text: str) -> tuple[str, str]:
-    """元数据 JSON + 原样正文。正文部分不做任何转义。"""
-    if FILE_MARKER in text:
-        head, body = text.split(FILE_MARKER, 1)
-        return head, body
-    return text, ""
-
-
-def _parse(text: str) -> dict[str, Any] | None:
-    """尽量从模型输出里抠出 JSON：可能带 ``` 围栏，也可能前后有废话。"""
-    import re as _re
-
-    body = text.strip()
-    fence = _re.search(r"```(?:json)?\s*(.+?)```", body, _re.S)
-    if fence:
-        body = fence.group(1).strip()
-
-    # strict=False：允许字符串里出现未转义的换行/制表符
-    # （模型贴大段 Markdown 或代码时最常犯这个）
-    try:
-        value = json.loads(body, strict=False)
-        return value if isinstance(value, dict) else None
-    except json.JSONDecodeError:
-        pass
-
-    start, end = body.find("{"), body.rfind("}")
-    if start >= 0 and end > start:
-        chunk = body[start : end + 1]
-        for candidate in (chunk, chunk.replace("\n", "\\n").replace("\r", "")):
-            try:
-                value = json.loads(candidate, strict=False)
-                return value if isinstance(value, dict) else None
-            except json.JSONDecodeError:
-                continue
-    return None
-
-
-def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
-    if not API_KEY:
-        raise AgentError("未配置 DEEPSEEK_API_KEY")
-
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 4000,
-        "response_format": {"type": "json_object"},
-    }
-    req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raise AgentError(f"模型返回 HTTP {exc.code}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise AgentError(f"连不上模型：{exc}") from exc
-
-    content = (data["choices"][0].get("message") or {}).get("content") or ""
-    if not content.strip():
-        raise AgentError("模型没有返回内容")
-
-    head, file_body = _split(content)
-    parsed = _parse(head)
-    if parsed is not None:
-        if file_body:
-            parsed["_body"] = file_body
-        return parsed
-
-    # 不合法就再来一次，把要求说得更死
-    print(f"[agent] 非法 JSON，尾部片段: {content[-120:]!r}", flush=True)
-    payload["messages"] = messages + [
-        {"role": "assistant", "content": content[:2000]},
-        {
-            "role": "user",
-            "content": "上面不是合法 JSON。重新输出一个合法的 JSON 对象，只输出对象本身，"
-            "不要代码块标记；字符串里的换行必须写成 \\n。",
-        },
-    ]
-    req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            retried = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        raise AgentError(f"重试失败：{exc}") from exc
-
-    content2 = (retried["choices"][0].get("message") or {}).get("content") or ""
-    head2, file_body2 = _split(content2)
-    parsed2 = _parse(head2)
-    if parsed2 is None:
-        raise AgentError("模型这次还是没给出合法 JSON")
-    if file_body2:
-        parsed2["_body"] = file_body2
-    return parsed2
-
-
-def _tree(files: dict[str, str]) -> str:
-    if not files:
-        return "项目是空的，一个文件都没有。"
-    lines = ["项目现有文件："]
-    for path, body in files.items():
-        lines.append(f"  {path}（{len(body.splitlines())} 行）")
-    return "\n".join(lines)
-
-
-def _context(files: dict[str, str], focus: str | None = None) -> str:
-    if not files:
-        return "项目是空的。"
-    parts = [_tree(files)]
-    targets = [focus] if focus else list(files)
-    for path in targets:
-        body = files.get(path)
-        if body is None:
-            continue
-        parts.append(f"\n=== {path} ===\n{body.rstrip()}")
-    return "\n".join(parts)
-
-
-def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
-    kind = str(raw.get("action") or "").strip().lower()
-    if kind not in {
-        "think", "look", "search", "plan", "say", "ask", "write", "edit",
-        "delete", "finish", "decline"
-    }:
-        raise AgentError(f"不认识的动作：{kind or '(空)'}")
-
-    if kind == "think":
-        return {"action": "think", "text": str(raw.get("text") or "").strip()[:200]}
-    if kind == "look":
-        return {"action": "look", "path": str(raw.get("path") or "").strip().lstrip("/")}
-    if kind == "say":
-        text = str(raw.get("text") or "").strip()
-        if not text:
-            raise AgentError("say 没有内容")
-        return {"action": "say", "text": text[:200]}
-    if kind == "decline":
-        text = str(raw.get("text") or "").strip()
-        if not text:
-            raise AgentError("decline 没有给出说明")
-        ideas = [str(x).strip()[:40] for x in (raw.get("suggestions") or []) if str(x).strip()]
-        return {"action": "decline", "text": text[:200], "suggestions": ideas[:3]}
-    if kind == "search":
-        text = str(raw.get("query") or "").strip()
-        if not text:
-            raise AgentError("search 没有给出 query")
-        return {"action": "search", "query": text[:120]}
-    if kind == "plan":
-        steps = [str(s).strip()[:24] for s in (raw.get("steps") or []) if str(s).strip()]
-        if not steps:
-            raise AgentError("plan 没有给出步骤")
-        return {"action": "plan", "steps": steps[:8]}
-    if kind == "ask":
-        questions: list[dict[str, Any]] = []
-        raw_questions = raw.get("questions")
-
-        if isinstance(raw_questions, list) and raw_questions:
-            for item in raw_questions[:4]:
-                text = str(item.get("question") or "").strip()
-                if not text:
-                    continue
-                opts = []
-                for o in (item.get("options") or [])[:4]:
-                    label = o.get("label") if isinstance(o, dict) else o
-                    label = str(label or "").strip()
-                    if label:
-                        opts.append(label[:40])
-                questions.append({"question": text[:120], "options": opts})
-        else:
-            # 兼容单个问题的老格式
-            text = str(raw.get("question") or "").strip()
-            if text:
-                opts = [str(o).strip()[:40] for o in (raw.get("options") or []) if str(o).strip()]
-                questions.append({"question": text[:120], "options": opts[:4]})
-
-        if not questions:
-            raise AgentError("ask 没有给出问题")
-        return {"action": "ask", "questions": questions}
-    if kind == "write":
-        code = raw.get("code") or ""
-        if not str(code).strip() and raw.get("_body"):
-            code = raw["_body"]
-        path = str(raw.get("path") or "").strip().lstrip("/")
-        if not path or not isinstance(code, str) or not code.strip():
-            raise AgentError("write 缺少路径或内容")
-        if not code.endswith("\n"):
-            code += "\n"
-        return {
-            "action": "write",
-            "path": path,
-            "lang": str(raw.get("lang") or "").lower()[:16],
-            "label": str(raw.get("label") or "新建文件").strip()[:24],
-            "code": code,
-            "overwrite": bool(raw.get("overwrite")),
-        }
-    if kind == "edit":
-        path = str(raw.get("path") or "").strip().lstrip("/")
-        find = raw.get("find") or ""
-        replace = raw.get("replace") or ""
-        if not str(replace).strip() and raw.get("_body"):
-            replace = raw["_body"]
-        if not path or not isinstance(find, str) or not find.strip():
-            raise AgentError("edit 缺少路径或 find")
-        return {
-            "action": "edit",
-            "path": path,
-            "label": str(raw.get("label") or "改一处").strip()[:24],
-            "find": find,
-            "replace": replace if isinstance(replace, str) else "",
-        }
-    if kind == "delete":
-        path = str(raw.get("path") or "").strip().lstrip("/")
-        if not path:
-            raise AgentError("delete 缺少路径")
-        return {"action": "delete", "path": path, "label": str(raw.get("label") or "删除").strip()[:24]}
-
-    return {"action": "finish", "text": str(raw.get("text") or "").strip()[:120]}
 
 
 def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
@@ -394,7 +110,7 @@ def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any
     if "content" in args and "code" not in args:
         args["code"] = args.pop("content")
 
-    action = _normalize({"action": TOOL_NAME_TO_ACTION.get(name, ""), **args})
+    action = normalize({"action": TOOL_NAME_TO_ACTION.get(name, ""), **args})
     assistant = {
         "role": "assistant",
         "content": msg.get("content") or "",
@@ -444,7 +160,7 @@ def step(
     if round_no >= MAX_ROUNDS:
         return {"event": {"action": "finish", "text": "步数到上限，先停在这里"}, "messages": messages}
 
-    ctx = _context(files)
+    ctx = build_context(files)
     ability = (
         "当前有联网搜索能力，可以用 search 查资料。"
         if search.enabled()
@@ -516,7 +232,7 @@ def step(
             body = files[path]
             detail = f"=== {path}（{len(body.splitlines())} 行）===\n{body}"
         else:
-            detail = _context(files)
+            detail = build_context(files)
         return {
             "event": action,
             "messages": _record(messages, assistant, call, {"ok": True, "content": detail[:6000]}),
