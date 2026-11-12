@@ -72,8 +72,8 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
   {"question":"缺的关键信息，一句话","options":["选项一","选项二"]},
   {"question":"第二个问题（没有选项就是自由填写）"}
 ]}
-{"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"完整文件内容"}
-{"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"换成的内容"}
+{"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"很短的文内容，超过 20 行不要写在这里"}
+{"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"很短才写这里"}
 {"action":"delete","path":"x.js","label":"为什么删"}
 {"action":"say","text":"只是回一句话，结束这一轮"}
 {"action":"finish","text":"一句话总结做了什么"}
@@ -93,6 +93,16 @@ SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一�
 4. 语气像同事：不道歉三遍，不讲大道理，不背声明。
 
 suggestions 里放的就是第 3 步那几条，每条是一句可以直接开工的话
+
+**写长文件不要塞进 JSON。** 内容超过 20 行（或含代码、Markdown）时，
+第一行只写元数据 JSON（code / replace 留空），换行后写一行 `<<<FILE>>>`，
+再把正文原样输出，不转义、不加代码块标记：
+
+{"action":"write","path":"README.md","lang":"md","label":"写说明"}
+<<<FILE>>>
+# QuickSort
+
+node quicksort.js
 
 工作方式：
 1. 先 think，说明你打算怎么看这件事、要做几个文件。
@@ -129,7 +139,8 @@ suggestions 里放的就是第 3 步那几条，每条是一句可以直接开�
    一次最多列 4 个问题，只列**真的缺的**，别把能自己定的也塞进去。
    每个问题的选项必须互斥、具体；没有明确选项就不给 options，让用户自由填。
 
-7. 全部做完再 finish。
+7. 全部做完再 finish。写完一个文件后不要再重写它——除非明确发现内容坏了。
+   每写完一个文件，系统会告诉你"已写入 x（n 行）"，这就是落盘成功的凭证。
 
 约束（通用，不要假设具体项目）：
 - 一次只做一件事：这一轮只输出一个动作。
@@ -141,6 +152,17 @@ suggestions 里放的就是第 3 步那几条，每条是一句可以直接开�
 - 说话简短，像同事，不要客套。"""
 
 
+FILE_MARKER = "\n<<<FILE>>>\n"
+
+
+def _split(text: str) -> tuple[str, str]:
+    """元数据 JSON + 原样正文。正文部分不做任何转义。"""
+    if FILE_MARKER in text:
+        head, body = text.split(FILE_MARKER, 1)
+        return head, body
+    return text, ""
+
+
 def _parse(text: str) -> dict[str, Any] | None:
     """尽量从模型输出里抠出 JSON：可能带 ``` 围栏，也可能前后有废话。"""
     import re as _re
@@ -150,8 +172,10 @@ def _parse(text: str) -> dict[str, Any] | None:
     if fence:
         body = fence.group(1).strip()
 
+    # strict=False：允许字符串里出现未转义的换行/制表符
+    # （模型贴大段 Markdown 或代码时最常犯这个）
     try:
-        value = json.loads(body)
+        value = json.loads(body, strict=False)
         return value if isinstance(value, dict) else None
     except json.JSONDecodeError:
         pass
@@ -161,7 +185,7 @@ def _parse(text: str) -> dict[str, Any] | None:
         chunk = body[start : end + 1]
         for candidate in (chunk, chunk.replace("\n", "\\n").replace("\r", "")):
             try:
-                value = json.loads(candidate)
+                value = json.loads(candidate, strict=False)
                 return value if isinstance(value, dict) else None
             except json.JSONDecodeError:
                 continue
@@ -172,7 +196,7 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     if not API_KEY:
         raise AgentError("未配置 DEEPSEEK_API_KEY")
 
-    body = {
+    payload = {
         "model": MODEL,
         "messages": messages,
         "temperature": 0.2,
@@ -181,7 +205,7 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     }
     req = urllib.request.Request(
         f"{BASE_URL}/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
         method="POST",
     )
@@ -197,13 +221,16 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     if not content.strip():
         raise AgentError("模型没有返回内容")
 
-    parsed = _parse(content)
+    head, file_body = _split(content)
+    parsed = _parse(head)
     if parsed is not None:
+        if file_body:
+            parsed["_body"] = file_body
         return parsed
 
     # 不合法就再来一次，把要求说得更死
     print(f"[agent] 非法 JSON，尾部片段: {content[-120:]!r}", flush=True)
-    body["messages"] = messages + [
+    payload["messages"] = messages + [
         {"role": "assistant", "content": content[:2000]},
         {
             "role": "user",
@@ -213,7 +240,7 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     ]
     req = urllib.request.Request(
         f"{BASE_URL}/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
         method="POST",
     )
@@ -224,9 +251,12 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
         raise AgentError(f"重试失败：{exc}") from exc
 
     content2 = (retried["choices"][0].get("message") or {}).get("content") or ""
-    parsed2 = _parse(content2)
+    head2, file_body2 = _split(content2)
+    parsed2 = _parse(head2)
     if parsed2 is None:
         raise AgentError("模型这次还是没给出合法 JSON")
+    if file_body2:
+        parsed2["_body"] = file_body2
     return parsed2
 
 
@@ -349,6 +379,8 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         return {"action": "ask", "questions": questions}
     if kind == "write":
         code = raw.get("code") or ""
+        if not str(code).strip() and raw.get("_body"):
+            code = raw["_body"]
         path = str(raw.get("path") or "").strip().lstrip("/")
         if not path or not isinstance(code, str) or not code.strip():
             raise AgentError("write 缺少路径或内容")
@@ -365,6 +397,8 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         path = str(raw.get("path") or "").strip().lstrip("/")
         find = raw.get("find") or ""
         replace = raw.get("replace") or ""
+        if not str(replace).strip() and raw.get("_body"):
+            replace = raw["_body"]
         if not path or not isinstance(find, str) or not find.strip():
             raise AgentError("edit 缺少路径或 find")
         return {
@@ -415,6 +449,18 @@ def step(
         ability = "当前没有配置联网搜索，不要使用 search 动作。"
     msgs = [{"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}, *messages]
 
+    # 熔断：连续三次重复同一个动作，说明它卡住了
+    tails = [
+        m["content"]
+        for m in messages[-6:]
+        if m["role"] == "assistant" and m["content"].startswith("{")
+    ]
+    if len(tails) >= 3 and len(set(tails[-3:])) == 1:
+        return {
+            "event": {"action": "finish", "text": "这一步重复了三次，先停在这里。"},
+            "messages": messages,
+        }
+
     raw = _chat(msgs)
     action = _normalize(raw)
 
@@ -423,10 +469,10 @@ def step(
             {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
         ], "stop": True}
 
-    if action["action"] == "say":
+    if action["action"] in {"say", "finish"}:
         missing = _claims_missing(action["text"], files)
         if missing:
-            # 说了写了文件但根本不存在：逼它真的写出来
+            # 说了写了文件但根本不存在：逼它真的写出来（finish 也一样）
             demand = (
                 f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
                 "不要只描述，直接给出这一轮的动作（write 或 edit），把文件真正写出来。"
@@ -453,9 +499,12 @@ def step(
                 "stop": True,
             }
 
-        return {"event": action, "messages": messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
-        ], "stop": True}
+        return {
+            "event": action,
+            "messages": messages
+            + [{"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}],
+            "stop": True,
+        }
 
     if action["action"] == "decline":
         return {"event": action, "messages": messages + [
@@ -497,8 +546,25 @@ def step(
                 "messages": messages,
                 "files": files,
             }
+
+        done = ""
+        if action["action"] == "write":
+            body = state.get(action["path"], "")
+            done = f"已写入 {action['path']}（{len(body.splitlines())} 行）。"
+        elif action["action"] == "edit":
+            done = f"已修改 {action['path']}。"
+        else:
+            done = f"已删除 {action['path']}。"
+
         messages = messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
+            {
+                "role": "user",
+                "content": (
+                    f"{done}当前文件：{', '.join(state) or '无'}。"
+                    "如果这件事已经做完就 finish；没做完就做下一步，不要重复同一个动作。"
+                ),
+            },
         ]
         return {"event": action, "messages": messages, "files": state}
 
