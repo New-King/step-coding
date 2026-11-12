@@ -1902,3 +1902,10 @@ button {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.35);
 }
+
+.idle-hint {
+  padding: 0 4px 7px;
+  font-size: 11px;
+  color: var(--faint);
+  text-align: left;
+}

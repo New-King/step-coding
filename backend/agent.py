@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -101,7 +102,11 @@ suggestions 里放的就是第 3 步那几条，每条是一句可以直接开�
    然后 plan，把步骤列出来。
 4. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
 
-5. 什么时候 say（只回一句话，结束这一轮，不给选项）：
+5. **say 只用于对话，不能用来汇报"已经写好/改好"。**
+   文件必须真的通过 write/edit 落到项目里，才算做完。
+   finish 之前，这一轮至少要有一个真正的 write / edit / delete。
+
+什么时候 say（只回一句话，结束这一轮，不给选项）：
    - 打招呼、寒暄、道谢、告别（"你好"、"谢谢"、"在吗"）
    - 问你是谁、能做什么
    - 用户只是随口说了一句，还没提出具体任务
@@ -223,6 +228,24 @@ def _chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     if parsed2 is None:
         raise AgentError("模型这次还是没给出合法 JSON")
     return parsed2
+
+
+PATHISH = re.compile(r"[\w./-]+\.(?:js|mjs|html|css|py|go|ts|tsx|json|md|sh|rb|java|c|cpp)")
+
+
+def _claims_missing(text: str, files: dict[str, str]) -> list[str]:
+    """说了"我写了 a.js"，但项目里没有这个文件——这是假宣称。"""
+    missing = []
+    for raw in PATHISH.findall(text or ""):
+        name = raw.lstrip("./")
+        if not name:
+            continue
+        if name in files:
+            continue
+        if any(k.endswith("/" + name) or k == name for k in files):
+            continue
+        missing.append(name)
+    return missing
 
 
 def _tree(files: dict[str, str]) -> str:
@@ -401,6 +424,35 @@ def step(
         ], "stop": True}
 
     if action["action"] == "say":
+        missing = _claims_missing(action["text"], files)
+        if missing:
+            # 说了写了文件但根本不存在：逼它真的写出来
+            demand = (
+                f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
+                "不要只描述，直接给出这一轮的动作（write 或 edit），把文件真正写出来。"
+            )
+            messages = messages + [
+                {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
+                {"role": "user", "content": demand},
+            ]
+            msgs2 = [{"role": "system", "content": f"{SYSTEM}\n\n{ctx}"}, *messages]
+            retry = _normalize(_chat(msgs2))
+            if retry["action"] in {"write", "edit", "delete"}:
+                state, problem = _apply(retry, files)
+                if not problem:
+                    messages = messages + [
+                        {"role": "assistant", "content": json.dumps(retry, ensure_ascii=False)}
+                    ]
+                    return {"event": retry, "messages": messages, "files": state}
+            return {
+                "event": {
+                    "action": "say",
+                    "text": f"我还没真的写出 {', '.join(missing)}，刚才那句不算。再说一次我就动手。",
+                },
+                "messages": messages,
+                "stop": True,
+            }
+
         return {"event": action, "messages": messages + [
             {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
         ], "stop": True}
