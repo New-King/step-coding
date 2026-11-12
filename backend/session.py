@@ -34,6 +34,21 @@ class SessionError(RuntimeError):
     pass
 
 
+def _trim(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """裁剪历史时别把 tool_calls 和它的 tool 结果拆散，否则模型接口会报错。"""
+    if len(messages) <= MAX_MESSAGES:
+        return list(messages)
+
+    cut = messages[-MAX_MESSAGES:]
+    # 前半段若以 tool 消息开头，说明它的 assistant(tool_calls) 被切掉了
+    while cut and cut[0].get("role") == "tool":
+        cut = cut[1:]
+    # 末尾若是带 tool_calls 的 assistant 却没有对应 tool 结果，也去掉
+    while cut and cut[-1].get("tool_calls"):
+        cut = cut[:-1]
+    return cut
+
+
 class Session:
     def __init__(
         self,
@@ -54,7 +69,7 @@ class Session:
     def dump(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "messages": self.messages[-MAX_MESSAGES:],
+            "messages": _trim(self.messages),
             "files": self.files,
             "seq": self.seq,
             "last_event": self.last_event,

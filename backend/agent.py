@@ -61,92 +61,58 @@ def has_key() -> bool:
     return bool(API_KEY)
 
 
-SYSTEM = """你是一个在小项目里干活的工程师。每一轮只做一个动作，输出一个 JSON 对象，不要解释。
+SYSTEM = """你是一个在小项目里干活的工程师。每一轮只调用一个工具，不要解释。
 
-可用动作：
-{"action":"think","text":"我现在在确认什么、打算怎么做，60 字以内"}
-{"action":"look","path":"目录或文件，空字符串表示项目根"}
-{"action":"search","query":"要搜什么，一句话"}
-{"action":"plan","steps":["做哪几步，每步 10 字以内"]}
-{"action":"ask","questions":[
-  {"question":"缺的关键信息，一句话","options":["选项一","选项二"]},
-  {"question":"第二个问题（没有选项就是自由填写）"}
-]}
-{"action":"write","path":"a.html","lang":"html","label":"这一步在做什么，12 字以内","code":"很短的文内容，超过 20 行不要写在这里"}
-{"action":"edit","path":"a.html","label":"这一步在做什么","find":"从现有内容里逐字复制的一段","replace":"很短才写这里"}
-{"action":"delete","path":"x.js","label":"为什么删"}
-{"action":"say","text":"只是回一句话，结束这一轮"}
-{"action":"finish","text":"一句话总结做了什么"}
-{"action":"decline","text":"先说中目的，再说做不到的那一点，最后给可开工的替代","suggestions":["贴着目的的替代一","替代二"]}
+工具：
+think(text)              说清正在确认什么、打算怎么做
+look(path)               看项目内容，空字符串表示整个项目
+search(query)            联网查资料（确定的事不要查）
+plan(steps)              列出接下来几步
+ask(questions)           缺关键信息时提问，一次最多 4 个，可带互斥选项
+say(text)                只回一句话结束这一轮（寒暄、解释）
+write_file(path, content, lang, label)   新建或整体覆盖一个文件
+edit_file(path, find, replace, label)    把文件里的一段换成新内容
+delete_file(path, label) 删除一个文件
+finish(text)             做完时调用，附一句总结
+decline(text, suggestions) 超出范围时礼貌说明
 
 你的范围：写代码、讲代码、看项目、改项目。
-超出范围的需求不要直接去做，也不要用 search 去查——用 decline 回答。
+超出范围的需求不要直接去做，也不要用 search 去查——用 decline。
 
-**拒绝不是关门，是把需求翻译成你能做的事。**按这个顺序写：
-
-1. 先说中对方的真实目的（一句话，证明你听懂了）。
-   对方要的往往不是那个具体形式，而是背后的结果。
-2. 只否定你做不到的那一小块，一句话，不要否定整个需求，也不要说教。
-3. 立刻给 1～3 个**用代码能达到同一目的**的做法，具体到能直接开工。
-   要贴着对方的目的走，而不是硬转成"你要不要学编程"。
-   想想：他想要的这个结果，能不能用一个页面、一个脚本、一次接口对接做出来？
-4. 语气像同事：不道歉三遍，不讲大道理，不背声明。
-
-suggestions 里放的就是第 3 步那几条，每条是一句可以直接开工的话
-
-**写长文件不要塞进 JSON。** 内容超过 20 行（或含代码、Markdown）时，
-第一行只写元数据 JSON（code / replace 留空），换行后写一行 `<<<FILE>>>`，
-再把正文原样输出，不转义、不加代码块标记：
-
-{"action":"write","path":"README.md","lang":"md","label":"写说明"}
-<<<FILE>>>
-# QuickSort
-
-node quicksort.js
+**拒绝不是关门，是把需求翻译成你能做的事。**
+1. 先说中对方的真实目的（证明你听懂了）
+2. 只否定你做不到的那一小块，一句话，不说教
+3. 立刻给 1～3 个用代码能达到同一目的的做法，具体到能开工
+4. 语气像同事：不道歉三遍，不讲大道理
 
 工作方式：
-1. 先 think，说明你打算怎么看这件事、要做几个文件。
-2. 需要看现状就先 look（新项目也要看一眼根目录，确认是不是空的）。
-3. 只在**不确定**或需要**最新信息**时才 search（API 用法、报错原因、库的新写法）。
-   你确定的事不要搜——搜一次花钱也拖时间。不确定用户环境里有没有的东西，问，不要猜。
-   然后 plan，把步骤列出来。
-4. 之后一次写一个文件。已经有内容的文件用 edit，不要用 write 整份覆盖。
+1. 先 think，说明打算怎么做、要几个文件。
+2. 需要看现状就 look（新项目也看一眼根目录）。
+3. 只在**不确定**或需要**最新信息**时才 search。你确定的事不要搜。
+4. 然后 plan 列出步骤。
+5. 一次写一个文件；已有内容的文件用 edit_file，不要整体覆盖。
+6. 写完会收到"已写入 x（n 行）"，那就是落盘凭证；不要重复写同一个文件。
+7. 全部做完再 finish。
 
-5. **say 只用于对话，不能用来汇报"已经写好/改好"。**
-   文件必须真的通过 write/edit 落到项目里，才算做完。
-   finish 之前，这一轮至少要有一个真正的 write / edit / delete。
+什么时候 say（只回一句，结束这一轮）：
+- 打招呼、寒暄、道谢
+- 问你是谁、能做什么
+→ 别把寒暄变成问卷。
 
-什么时候 say（只回一句话，结束这一轮，不给选项）：
-   - 打招呼、寒暄、道谢、告别（"你好"、"谢谢"、"在吗"）
-   - 问你是谁、能做什么
-   - 用户只是随口说了一句，还没提出具体任务
-   → 自然回一句，停下等用户。**别把寒暄变成问卷。**
+什么时候 ask：
+- 判据只有一条：缺了某个信息就没法正确开工
+- 该问：要连真实接口但没有地址/密钥、技术栈决定完全不同的实现、
+  两种理解都说得通、要删除或覆盖已有内容
+- 不该问：配色、字号、文件名、目录层级——自己定
+- 没有具体选项就用 say 问，不要硬凑选项
 
-6. 什么时候问（ask）：
-   判据只有一条：**缺了某个信息，你就没法正确开工。**
+**say 和 finish 都不能宣称写了某个文件**——文件必须通过 write_file / edit_file 真的落地。
 
-   典型是该问的：
-   - 要连真实接口/服务，但没有地址或密钥
-   - 技术栈决定了完全不同的实现（React 还是原生、要不要后端）
-   - 需求里两种理解都说得通，选错要重做
-   - 用户要删除/覆盖已有内容，需要确认
-
-   不该问的（自己定或直接做）：
-   - 配色、字号、间距这类审美细节
-   - 文件叫什么名字、放几层目录
-   - "你想做什么"这种开放问题——用 say 问，别做成选项
-
-   一次最多列 4 个问题，只列**真的缺的**，别把能自己定的也塞进去。
-   每个问题的选项必须互斥、具体；没有明确选项就不给 options，让用户自由填。
-
-7. 全部做完再 finish。写完一个文件后不要再重写它——除非明确发现内容坏了。
-   每写完一个文件，系统会告诉你"已写入 x（n 行）"，这就是落盘成功的凭证。
-
-约束（通用，不要假设具体项目）：
-- 一次只做一件事：这一轮只输出一个动作。
-- write 的 code 必须是完整、能直接打开运行的；不要伪代码、不要"此处省略"。
-- edit 的 find 必须逐字照抄现有内容（含缩进），只改必须改的那几行。
-- 文件数量和代码长度跟任务规模匹配：小的演示 1～4 个文件，别为了完整而堆砌。
+约束（通用）：
+- 一轮只调用一个工具。
+- 文件内容必须完整、能直接运行；不要伪代码、不要"此处省略"。
+- edit_file 的 find 必须逐字照抄现有内容（含缩进）。
+- 文件数量和代码长度跟任务规模匹配，别为了完整而堆砌。
 - 不要引入构建工具、包管理、TypeScript、框架，除非用户明确要。
 - 不要虚构外部资源（API 地址、密钥、图片链接）；需要就 ask。
 - 说话简短，像同事，不要客套。"""
@@ -417,16 +383,156 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     return {"action": "finish", "text": str(raw.get("text") or "").strip()[:120]}
 
 
+TOOL_NAME_TO_ACTION = {
+    "think": "think", "look": "look", "search": "search", "plan": "plan",
+    "ask": "ask", "say": "say", "write_file": "write", "edit_file": "edit",
+    "delete_file": "delete", "finish": "finish", "decline": "decline",
+}
+
+
+def _spec(name: str, desc: str, props: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                "required": required,
+            },
+        },
+    }
+
+
+TOOLS: list[dict[str, Any]] = [
+    _spec("think", "说清正在确认什么、打算怎么做（不改变任何东西）。",
+          {"text": {"type": "string", "description": "60 字以内"}}, ["text"]),
+    _spec("look", "读项目当前内容；path 为空表示看整个项目。",
+          {"path": {"type": "string"}}, ["path"]),
+    _spec("search", "联网查资料（API 用法、报错原因、最新写法）。确定的事不要查。",
+          {"query": {"type": "string"}}, ["query"]),
+    _spec("plan", "列出接下来几步，让用户知道你要干什么。",
+          {"steps": {"type": "array", "items": {"type": "string"}}}, ["steps"]),
+    _spec("ask", "缺关键信息没法开工时提问，一次最多 4 个问题，可带互斥选项。",
+          {"questions": {"type": "array", "items": {
+              "type": "object",
+              "properties": {
+                  "question": {"type": "string"},
+                  "options": {"type": "array", "items": {"type": "string"}},
+              },
+              "required": ["question"],
+          }}}, ["questions"]),
+    _spec("say", "只回一句话结束这一轮（寒暄、解释）。不能用来宣称文件已写好。",
+          {"text": {"type": "string"}}, ["text"]),
+    _spec("write_file", "新建或整体覆盖一个文件。内容必须是完整的、能直接运行的。",
+          {"path": {"type": "string"}, "lang": {"type": "string"},
+           "label": {"type": "string", "description": "这一步在做什么，12 字以内"},
+           "content": {"type": "string", "description": "完整文件内容"}},
+          ["path", "content"]),
+    _spec("edit_file", "把文件里的一段原文换成新内容。find 必须逐字照抄现有内容。",
+          {"path": {"type": "string"}, "label": {"type": "string"},
+           "find": {"type": "string"}, "replace": {"type": "string"}},
+          ["path", "find", "replace"]),
+    _spec("delete_file", "删除项目里的一个文件。",
+          {"path": {"type": "string"}, "label": {"type": "string"}}, ["path"]),
+    _spec("finish", "这件事做完了，附一句总结。",
+          {"text": {"type": "string"}}, ["text"]),
+    _spec("decline", "超出范围时礼貌说明，并用代码给出可达成的替代。",
+          {"text": {"type": "string"},
+           "suggestions": {"type": "array", "items": {"type": "string"}}}, ["text"]),
+]
+
+
+def _loads(text: str) -> dict[str, Any]:
+    for candidate in (text or "", (text or "").replace("\n", "\\n")):
+        try:
+            value = json.loads(candidate, strict=False)
+            if isinstance(value, dict):
+                return value
+        except json.JSONDecodeError:
+            continue
+    return {}
+
+
+def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    """真的 function calling：返回 (动作, 助手消息, tool_call)。"""
+    if not API_KEY:
+        raise AgentError("未配置 DEEPSEEK_API_KEY")
+
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "tools": TOOLS,
+        "tool_choice": "auto",
+        "temperature": 0.2,
+        "max_tokens": 6000,
+    }
+    req = urllib.request.Request(
+        f"{BASE_URL}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:200]
+        raise AgentError(f"模型返回 HTTP {exc.code} {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AgentError(f"连不上模型：{exc}") from exc
+
+    msg = (data["choices"][0].get("message") or {})
+    calls = msg.get("tool_calls") or []
+
+    if not calls:
+        text = (msg.get("content") or "").strip()
+        action = {"action": "say", "text": text[:200] or "……"}
+        return action, {"role": "assistant", "content": text}, None
+
+    call = calls[0]
+    name = call.get("function", {}).get("name", "")
+    args = _loads(call.get("function", {}).get("arguments") or "{}")
+
+    if "content" in args and "code" not in args:
+        args["code"] = args.pop("content")
+
+    action = _normalize({"action": TOOL_NAME_TO_ACTION.get(name, ""), **args})
+    assistant = {
+        "role": "assistant",
+        "content": msg.get("content") or "",
+        "tool_calls": [call],
+    }
+    return action, assistant, call
+
+
+def _record(
+    messages: list[dict[str, Any]],
+    assistant: dict[str, Any],
+    call: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """把"模型说了什么"和"工具返回了什么"都记进历史。"""
+    out = messages + [assistant]
+    if call is not None:
+        out = out + [
+            {
+                "role": "tool",
+                "tool_call_id": call.get("id", ""),
+                "content": json.dumps(result or {"ok": True}, ensure_ascii=False)[:4000],
+            }
+        ]
+    return out
+
+
 def step(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     files: dict[str, str],
     round_no: int,
     pending_search: str = "",
 ) -> dict[str, Any]:
-    """跑一轮，返回下一个动作。
-
-    pending_search 非空：界面已经显示过「正在搜」，这一轮只把结果抓回来补上。
-    """
+    """跑一轮，返回下一个动作。"""
     if pending_search:
         try:
             results = search.dedupe(search.query(pending_search))
@@ -443,111 +549,92 @@ def step(
         return {"event": {"action": "finish", "text": "步数到上限，先停在这里"}, "messages": messages}
 
     ctx = _context(files)
-    if search.enabled():
-        ability = "当前有联网搜索能力，可以用 search 查资料。"
-    else:
-        ability = "当前没有配置联网搜索，不要使用 search 动作。"
-    msgs = [{"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}, *messages]
+    ability = (
+        "当前有联网搜索能力，可以用 search 查资料。"
+        if search.enabled()
+        else "当前没有配置联网搜索，不要使用 search 工具。"
+    )
+    system = {"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}
 
-    # 熔断：连续三次重复同一个动作，说明它卡住了
-    tails = [
-        m["content"]
-        for m in messages[-6:]
-        if m["role"] == "assistant" and m["content"].startswith("{")
+    # 熔断：连续三次完全相同的工具调用
+    recent = [
+        json.dumps(m.get("tool_calls"), ensure_ascii=False)
+        for m in messages[-8:]
+        if m.get("role") == "assistant" and m.get("tool_calls")
     ]
-    if len(tails) >= 3 and len(set(tails[-3:])) == 1:
+    if len(recent) >= 3 and len(set(recent[-3:])) == 1:
         return {
             "event": {"action": "finish", "text": "这一步重复了三次，先停在这里。"},
             "messages": messages,
         }
 
-    raw = _chat(msgs)
-    action = _normalize(raw)
+    action, assistant, call = _call([system, *messages])
 
     if action["action"] == "ask":
-        return {"event": action, "messages": messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
-        ], "stop": True}
+        return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] in {"say", "finish"}:
-        missing = _claims_missing(action["text"], files)
+        missing = _claims_missing(action.get("text", ""), files)
         if missing:
-            # 说了写了文件但根本不存在：逼它真的写出来（finish 也一样）
             demand = (
                 f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
-                "不要只描述，直接给出这一轮的动作（write 或 edit），把文件真正写出来。"
+                "不要只说，直接调用 write_file 把它写出来。"
             )
-            messages = messages + [
-                {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
-                {"role": "user", "content": demand},
-            ]
-            msgs2 = [{"role": "system", "content": f"{SYSTEM}\n\n{ctx}"}, *messages]
-            retry = _normalize(_chat(msgs2))
-            if retry["action"] in {"write", "edit", "delete"}:
-                state, problem = _apply(retry, files)
+            retry_messages = _record(messages, assistant, call, {"ok": False, "error": demand})
+            retry_action, retry_assistant, retry_call = _call(
+                [system, *retry_messages, {"role": "user", "content": demand}]
+            )
+            if retry_action["action"] in {"write", "edit", "delete"}:
+                state, problem = _apply(retry_action, files)
                 if not problem:
-                    messages = messages + [
-                        {"role": "assistant", "content": json.dumps(retry, ensure_ascii=False)}
-                    ]
-                    return {"event": retry, "messages": messages, "files": state}
+                    done = {"ok": True, "files": list(state)}
+                    return {
+                        "event": retry_action,
+                        "messages": _record(retry_messages, retry_assistant, retry_call, done),
+                        "files": state,
+                    }
             return {
                 "event": {
                     "action": "say",
                     "text": f"我还没真的写出 {', '.join(missing)}，刚才那句不算。再说一次我就动手。",
                 },
-                "messages": messages,
+                "messages": retry_messages,
                 "stop": True,
             }
 
-        return {
-            "event": action,
-            "messages": messages
-            + [{"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}],
-            "stop": True,
-        }
+        return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] == "decline":
-        return {"event": action, "messages": messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
-        ], "stop": True}
+        return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] == "search":
-        # 先把动作交回去（界面显示「正在搜」），结果下一轮再补
         return {
             "event": action,
-            "messages": messages
-            + [{"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}],
+            "messages": _record(messages, assistant, call, {"ok": True, "pending": True}),
             "pending_search": action["query"],
         }
 
     if action["action"] == "look":
-        # look 不改文件，直接把看的结果塞回上下文
-        path = action["path"]
+        path = action.get("path") or ""
         if path and files.get(path):
             body = files[path]
             detail = f"=== {path}（{len(body.splitlines())} 行）===\n{body}"
         else:
             detail = _context(files)
-        messages = messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
-            {"role": "user", "content": f"这是你要看的内容：\n{detail}"},
-        ]
-        return {"event": action, "messages": messages}
+        return {
+            "event": action,
+            "messages": _record(messages, assistant, call, {"ok": True, "content": detail[:6000]}),
+        }
 
     if action["action"] in {"write", "edit", "delete"}:
         state, problem = _apply(action, files)
         if problem:
-            messages = messages + [
-                {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
-                {"role": "user", "content": f"{problem}。请重新给出这个动作，find 要逐字照抄现有内容。"},
-            ]
             return {
                 "event": {"action": "error", "text": problem},
-                "messages": messages,
+                "messages": _record(messages, assistant, call, {"ok": False, "error": problem}),
                 "files": files,
             }
 
-        done = ""
         if action["action"] == "write":
             body = state.get(action["path"], "")
             done = f"已写入 {action['path']}（{len(body.splitlines())} 行）。"
@@ -556,17 +643,16 @@ def step(
         else:
             done = f"已删除 {action['path']}。"
 
-        messages = messages + [
-            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)},
-            {
-                "role": "user",
-                "content": (
-                    f"{done}当前文件：{', '.join(state) or '无'}。"
-                    "如果这件事已经做完就 finish；没做完就做下一步，不要重复同一个动作。"
-                ),
-            },
-        ]
-        return {"event": action, "messages": messages, "files": state}
+        result = {
+            "ok": True,
+            "message": f"{done}当前文件：{', '.join(state) or '无'}。做完就 finish，不要重复同一个动作。",
+            "files": list(state),
+        }
+        return {"event": action, "messages": _record(messages, assistant, call, result), "files": state}
 
-    messages = messages + [{"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}]
-    return {"event": action, "messages": messages}
+    # think / plan 不结束这一轮，继续往下走
+    return {
+        "event": action,
+        "messages": _record(messages, assistant, call),
+        "stop": action["action"] not in {"think", "plan"},
+    }
