@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import search
+from .fs import apply as apply_fs
 from .tools import TOOL_NAME_TO_ACTION, TOOLS, loads
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -267,24 +268,6 @@ def _context(files: dict[str, str], focus: str | None = None) -> str:
     return "\n".join(parts)
 
 
-def _apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str], str | None]:
-    """把动作落到文件上。返回新文件表和可能的错误说明。"""
-    state = dict(files)
-    kind = action["action"]
-
-    if kind == "write":
-        state[action["path"]] = action["code"]
-    elif kind == "edit":
-        body = state.get(action["path"], "")
-        idx = body.find(action["find"])
-        if idx < 0:
-            return state, f"在 {action['path']} 里找不到要替换的那一段"
-        state[action["path"]] = body[:idx] + action["replace"] + body[idx + len(action["find"]):]
-    elif kind == "delete":
-        state.pop(action["path"], None)
-    return state, None
-
-
 def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
     if kind not in {
@@ -359,6 +342,7 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
             "lang": str(raw.get("lang") or "").lower()[:16],
             "label": str(raw.get("label") or "新建文件").strip()[:24],
             "code": code,
+            "overwrite": bool(raw.get("overwrite")),
         }
     if kind == "edit":
         path = str(raw.get("path") or "").strip().lstrip("/")
@@ -554,7 +538,7 @@ def step(
                 [system, *retry_messages, {"role": "user", "content": demand}]
             )
             if retry_action["action"] in {"write", "edit", "delete"}:
-                state, problem = _apply(retry_action, files)
+                state, problem = apply_fs(retry_action, files)
                 if not problem:
                     done = {"ok": True, "files": list(state)}
                     return {
@@ -596,7 +580,7 @@ def step(
         }
 
     if action["action"] in {"write", "edit", "delete"}:
-        state, problem = _apply(action, files)
+        state, problem = apply_fs(action, files)
         if problem:
             return {
                 "event": {"action": "error", "text": problem},
