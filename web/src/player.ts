@@ -77,6 +77,11 @@ export class Player {
     }
   }
 
+  /** 是否还有东西没演完（循环靠它决定要不要等）。 */
+  get busy(): boolean {
+    return this.running && !this.finished && (this.pending !== "" || this.cursor < this.steps.length);
+  }
+
   files(): Record<string, string> {
     return { ...this.buffers };
   }

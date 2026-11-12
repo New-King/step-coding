@@ -32,7 +32,7 @@ type Event =
   | { action: "finish"; text: string }
   | { action: "say"; text: string }
   | { action: "decline"; text: string; suggestions: string[] }
-  | { action: "user"; text: string; interrupt?: boolean };
+  | { action: "user"; text: string };
 
 type Item = {
   id: number;
@@ -98,11 +98,11 @@ function langOf(name: string) {
   return "javascript";
 }
 
-async function postJson(url: string, body: unknown) {
+async function request(url: string, body: unknown, method = "POST") {
   const res = await fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
@@ -110,6 +110,23 @@ async function postJson(url: string, body: unknown) {
   }
   return res.json();
 }
+
+/** 幂等重试：同一轮重复发不会重复执行，所以可以放心退避重发。 */
+async function requestWithRetry(url: string, body: unknown, tries = 3) {
+  let lastError: unknown;
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      return await request(url, body);
+    } catch (e) {
+      lastError = e;
+      const message = String(e);
+      if (/请求失败 (4\d\d)/.test(message)) throw e;
+      await new Promise((r) => window.setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  throw lastError;
+}
+
 
 export default function App() {
   const playerRef = useRef<Player | null>(null);
@@ -153,13 +170,17 @@ export default function App() {
 
   const messagesRef = useRef<{ role: string; content: string }[]>([]);
   const filesRef = useRef<Record<string, string>>({});
-  const roundRef = useRef(0);
   const startFilesRef = useRef<Record<string, string>>({});
   const serverFilesRef = useRef<Record<string, string>>({});
   const itemsRef = useRef<Item[]>([]);
   const idRef = useRef(0);
   const sessionIdRef = useRef("");
   const answeringRef = useRef(false);
+  const seqRef = useRef(0);
+  const statusRef = useRef<"idle" | "running" | "waiting" | "paused" | "done">("idle");
+  const pumpingRef = useRef(false);
+  const pendingSearchRef = useRef("");
+  const pendingMessageRef = useRef<string | null>(null);
   const pausedRef = useRef(false);
   const blockedRef = useRef(false);
   const lastMsRef = useRef(0);
@@ -181,7 +202,7 @@ export default function App() {
     items: itemsRef.current,
     files: filesRef.current,
     messages: messagesRef.current,
-    round: roundRef.current,
+    round: seqRef.current,
     pending,
     askIndex,
     askAnswers,
@@ -213,6 +234,15 @@ export default function App() {
     console.info(`[step-coding] ${tag} · ${text}`);
   };
 
+  const applyChanges = (changed: Record<string, string | null>) => {
+    const next = { ...filesRef.current };
+    for (const [path, body] of Object.entries(changed)) {
+      if (body === null) delete next[path];
+      else next[path] = body;
+    }
+    filesRef.current = next;
+  };
+
   const markUsed = (id: number, idea: string) => {
     itemsRef.current = itemsRef.current.map((it) =>
       it.id === id ? { ...it, picked: idea } : it
@@ -240,8 +270,6 @@ export default function App() {
     p.onFinish = () => {};
     p.onExhausted = () => {
       filesRef.current = p.files();
-      if (waitingRef.current) return;
-      void nextRound();
     };
 
     let hasSaved = false;
@@ -285,53 +313,85 @@ export default function App() {
     filesRef.current = {};
     startFilesRef.current = {};
     sessionIdRef.current = `s-${Date.now()}`;
-    roundRef.current = 0;
+    seqRef.current = 0;
     waitingRef.current = false;
-    messagesRef.current = [{ role: "user", content: value }];
+    messagesRef.current = [];
     push({ action: "user", text: value } as Event);
 
     setRunning(true);
-    runningRef.current = true;
     answeringRef.current = false;
-    await nextRound();
+
+    try {
+      await request("/api/session", {
+        id: sessionIdRef.current,
+        messages: [],
+        files: {},
+        seq: 0,
+      });
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, "");
+      note("session.error", msg);
+      setError(msg);
+      push({ action: "error", text: msg } as Event);
+      setRunning(false);
+        return;
+    }
+
+    pendingMessageRef.current = value;
+    statusRef.current = "running";
+    await pump();
   };
 
-  const nextRound = async (pendingSearch = "") => {
-    if (!runningRef.current || waitingRef.current) return;
-    if (pausedRef.current) {
-      blockedRef.current = true;
-      note("pause", "已暂停，先不请求下一步");
+  /** 唯一的循环驱动：一次一步，等这一步演完再问下一步。 */
+  const pump = async () => {
+    if (pumpingRef.current) {
+      note("pump", "已在跑，忽略这次触发");
       return;
     }
-    if (roundRef.current >= MAX_ROUNDS) {
-      finish("步数到上限，先停在这里。");
-      return;
-    }
+    pumpingRef.current = true;
+    note("pump", "start");
 
-    const t0 = Date.now();
     try {
-      const res = await postJson("/api/step", {
-        messages: messagesRef.current,
-        files: filesRef.current,
-        round: roundRef.current,
-        pending_search: pendingSearch,
-      });
-      lastMsRef.current = Date.now() - t0;
-      roundRef.current += 1;
-      messagesRef.current = res.messages;
-      // 服务端算好的结果先存着，播放完再以播放器为准同步，
-      // 否则 edit 会被应用两次（第二次找不到原文就往末尾追加）
-      if (res.files) serverFilesRef.current = res.files;
+      while (statusRef.current === "running") {
+        if (seqRef.current >= MAX_ROUNDS) {
+          pushStep({ action: "finish", text: "步数到上限，先停在这里" });
+          statusRef.current = "done";
+          setRunning(false);
+          break;
+        }
 
-      await handle(res.event as Event);
+        const t0 = Date.now();
+        const res = await requestWithRetry("/api/step", {
+          session_id: sessionIdRef.current,
+          seq: seqRef.current,
+          message: pendingMessageRef.current,
+          pending_search: pendingSearchRef.current || null,
+        });
+
+        pendingMessageRef.current = null;
+        pendingSearchRef.current = "";
+        lastMsRef.current = Date.now() - t0;
+        seqRef.current = res.seq;
+
+        if (res.changed) {
+          applyChanges(res.changed as Record<string, string | null>);
+          serverFilesRef.current = filesRef.current;
+        }
+
+        const stop = handleEvent(res.event as Event);
+        note("pump", `event=${res.event?.action} stop=${stop}`);
+        if (stop) break;
+      }
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
       note("loop.error", msg);
       setError(msg);
-      push({ action: "error", text: msg } as Event);
-      // 出错就停住，别接着跑自检（什么都没做呢）
+      pushStep({ action: "error", text: msg } as Event);
+      statusRef.current = "done";
       setRunning(false);
-      runningRef.current = false;
+    } finally {
+      pumpingRef.current = false;
+      note("pump", `exit status=${statusRef.current}`);
     }
   };
 
@@ -340,18 +400,17 @@ export default function App() {
     lastMsRef.current = 0;
   };
 
-  const handle = async (ev: Event) => {
+  /** 处理一个动作。返回 true 表示这一轮到此为止。 */
+  const handleEvent = (ev: Event): boolean => {
     note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
 
     if (ev.action === "search") {
       if (!ev.results) {
-        // 第一段：先把"正在搜"挂出来，再去抓结果
         pushStep(ev);
         pendingCardRef.current = itemsRef.current[itemsRef.current.length - 1].id;
-        window.setTimeout(() => void nextRound(ev.query), 60);
-        return;
+        pendingSearchRef.current = ev.query;
+        return false;
       }
-      // 第二段：结果回来，补到同一张卡上
       const id = pendingCardRef.current;
       pendingCardRef.current = null;
       if (id != null) {
@@ -360,14 +419,12 @@ export default function App() {
       } else {
         pushStep(ev);
       }
-      window.setTimeout(() => void nextRound(), 260);
-      return;
+      return false;
     }
 
     if (ev.action === "think" || ev.action === "look" || ev.action === "plan") {
       pushStep(ev);
-      window.setTimeout(() => void nextRound(), ev.action === "plan" ? 700 : 350);
-      return;
+      return false;
     }
 
     if (ev.action === "ask") {
@@ -377,50 +434,47 @@ export default function App() {
       setAskIndex(0);
       setAskAnswers([]);
       waitingRef.current = true;
+      statusRef.current = "waiting";
       setRunning(false);
-      runningRef.current = false;
       window.setTimeout(() => composerRef.current?.focus(), 60);
-      return;
+      return true;
     }
 
     if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
       pushStep(ev);
       playEvent(ev);
-      return;
+      return false;
     }
 
     if (ev.action === "error") {
       pushStep(ev);
-      window.setTimeout(() => void nextRound(), 400);
-      return;
+      return false;
     }
 
     if (ev.action === "say") {
-      stopRun();
       pushStep(ev);
+      stopRun();
       window.setTimeout(() => composerRef.current?.focus(), 60);
-      return;
+      return true;
     }
 
     if (ev.action === "decline") {
-      stopRun();
-      setPending(null);
-      // 一律留在当前界面，把话说清楚，不要把人弹到一个看不见的地方
       pushStep(ev);
+      setPending(null);
       setDeclined(ev);
-      return;
+      stopRun();
+      return true;
     }
 
     if (ev.action === "finish") {
       pushStep(ev);
       finish(ev.text);
-      return;
+      return true;
     }
 
-    // 兜底：没识别的动作也不能让循环停住
     note("loop.unknown", JSON.stringify(ev).slice(0, 120));
     push({ action: "error", text: `不认识的动作：${ev.action}` } as Event);
-    window.setTimeout(() => void nextRound(), 400);
+    return false;
   };
 
   /** 把一次文件动作演出来，演完继续循环。 */
@@ -439,7 +493,6 @@ export default function App() {
           p.setBuffers(fixed);
           setSnap((prev) => ({ ...prev, active: ev.path }));
         }
-        window.setTimeout(() => void nextRound(), 240);
         return;
       }
     }
@@ -455,6 +508,9 @@ export default function App() {
       step = { type: "delete", path: ev.path, banner: ev.label, delay: 320 };
     }
 
+    // 上一段还没演完：直接收尾，保证这一段的起点是对的
+    if (p.busy) p.finishNow();
+
     setPeek(null);
     p.paused = false;
     setPaused(false);
@@ -465,11 +521,12 @@ export default function App() {
       initial: { ...filesRef.current },
       stats: { files: Object.keys(files).length, steps: 1, lines: 0 },
     });
+
   };
 
   const finish = (text: string) => {
+    statusRef.current = "done";
     setRunning(false);
-    runningRef.current = false;
 
     const files = filesRef.current;
     if (Object.keys(files).length === 0) {
@@ -556,14 +613,14 @@ export default function App() {
         : pending.map((q, i) => `${q.question} → ${next[i]}`).join("\n");
 
     push({ action: "user", text: payload } as Event);
-    messagesRef.current = [...messagesRef.current, { role: "user", content: payload }];
+    pendingMessageRef.current = payload;
     setPending(null);
     setAskAnswers([]);
     setAskIndex(0);
     waitingRef.current = false;
     setRunning(true);
-    runningRef.current = true;
-    await nextRound();
+    statusRef.current = "running";
+    await pump();
   };
 
   const send = async (text: string) => {
@@ -576,26 +633,27 @@ export default function App() {
       return;
     }
 
-    if (runningRef.current) {
-      messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
-      push({ action: "user", text: value, interrupt: true } as Event);
-      return;
-    }
-
     if (!started) {
       await start(value);
       return;
     }
 
-    messagesRef.current = [...messagesRef.current, { role: "user", content: value }];
+    if (statusRef.current === "running") {
+      // 跑的时候不接受新话：先暂停，再说话
+      note("send.blocked", "正在跑，忽略这次输入");
+      setQuestion(value);
+      return;
+    }
+
     push({ action: "user", text: value } as Event);
+    pendingMessageRef.current = value;
+    statusRef.current = "running";
     setRunning(true);
-    runningRef.current = true;
-    await nextRound();
+    await pump();
   };
 
   /** 从上次的现场接着干 */
-  const resume = () => {
+  const resume = async () => {
     const saved = resumable;
     if (!saved) return;
 
@@ -606,12 +664,30 @@ export default function App() {
     setItems(saved.items);
     filesRef.current = saved.files;
     messagesRef.current = saved.messages ?? [];
-    roundRef.current = saved.round ?? 0;
+    seqRef.current = saved.round ?? 0;
+    seqRef.current = saved.round ?? 0;
     idRef.current = saved.items.reduce((m, i) => Math.max(m, i.id), 0);
     setError(null);
 
     playerRef.current!.setBuffers(saved.files);
     setSnap((prev) => ({ ...prev, buffers: saved.files, active: Object.keys(saved.files)[0] ?? null }));
+
+    // 服务端可能重启过：用本地镜像把现场补回去（有会话就原样返回，不覆盖）
+    try {
+      const sync = await request("/api/session", {
+        id: saved.id,
+        messages: saved.messages ?? [],
+        files: saved.files,
+        seq: saved.round ?? 0,
+      });
+      seqRef.current = sync.seq ?? seqRef.current;
+      if (sync.files) {
+        filesRef.current = sync.files;
+        playerRef.current!.setBuffers(sync.files);
+      }
+    } catch (e) {
+      note("session.restore", String(e).replace(/^Error:\s*/, ""));
+    }
 
     if (saved.pending?.length) {
       setPending(saved.pending);
@@ -619,8 +695,7 @@ export default function App() {
       setAskAnswers(saved.askAnswers ?? []);
       waitingRef.current = true;
       setRunning(false);
-      runningRef.current = false;
-      note("resume", "恢复到待回答");
+        note("resume", "恢复到待回答");
       return;
     }
 
@@ -633,20 +708,19 @@ export default function App() {
       playerRef.current!.paused = false;
       setPaused(false);
       setRunning(true);
-      runningRef.current = true;
+      statusRef.current = "running";
       note("resume", "接着跑");
-      void nextRound();
+      void pump();
     } else {
       setRunning(false);
-      runningRef.current = false;
-      note("resume", "恢复到已完成");
+        note("resume", "恢复到已完成");
     }
   };
 
   const stopRun = () => {
-    runningRef.current = false;
+    statusRef.current = "done";
     setRunning(false);
-    note("stop", "手动停止");
+    note("stop", "本轮结束");
   };
 
   /** 返回首页：停下手上的活，但把现场留着，回来可以继续 */
@@ -685,7 +759,6 @@ export default function App() {
     setError(null);
     filesRef.current = {};
     messagesRef.current = [];
-    roundRef.current = 0;
     sessionIdRef.current = "";
   };
 
@@ -693,15 +766,17 @@ export default function App() {
     const p = playerRef.current!;
     const next = !p.paused;
     p.paused = next;
-    pausedRef.current = next;
     setPaused(next);
-    note(next ? "pause" : "resume", next ? "暂停" : "继续");
 
-    if (!next && blockedRef.current) {
-      blockedRef.current = false;
+    if (next) {
+      statusRef.current = "paused";
+      setRunning(false);
+      note("pause", "暂停循环与播放");
+    } else {
+      statusRef.current = "running";
       setRunning(true);
-      runningRef.current = true;
-      void nextRound();
+      note("resume", "继续");
+      void pump();
     }
   };
 
@@ -830,14 +905,15 @@ export default function App() {
             void send(question);
           }
         }}
-        placeholder={placeholder}
+        placeholder={running ? "正在跑，先点暂停再说话" : placeholder}
         rows={1}
+        disabled={running}
         autoFocus
       />
       <button
         className="composer-send"
         onClick={() => void send(question)}
-        disabled={!question.trim()}
+        disabled={running || !question.trim()}
         title="发送"
       >
         →
@@ -1139,7 +1215,7 @@ export default function App() {
             {!running && !pending && items.length > 0 && (
               <div className="idle-hint">轮到你了 · 接着说一句就继续</div>
             )}
-            {composer(pending ? "回答上面的问题，或直接写…" : "可以随时插话")}
+            {composer(pending ? "回答上面的问题，或直接写…" : "接着说一句…")}
           </div>
         </aside>
       </main>
@@ -1287,7 +1363,6 @@ function TimelineItem({
   if (ev.action === "user") {
     return (
       <div className="tl user">
-        {ev.interrupt && <span className="user-tag">插话</span>}
         <span>{ev.text}</span>
       </div>
     );
