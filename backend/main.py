@@ -90,6 +90,7 @@ def post_step(body: StepIn) -> dict[str, Any]:
             sess.files,
             sess.seq,
             body.pending_search or "",
+            sess.observed,
         )
     except agent.AgentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

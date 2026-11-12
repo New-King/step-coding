@@ -9,13 +9,22 @@ from __future__ import annotations
 
 from typing import Any
 
-def apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str], str | None]:
+def apply(
+    action: dict[str, Any],
+    files: dict[str, str],
+    observed: set[str] | None = None,
+) -> tuple[dict[str, str], str | None]:
     """把动作落到文件上。返回新文件表和可能的错误说明。"""
     state = dict(files)
     kind = action["action"]
 
     if kind == "write":
         path = action["path"]
+        if path in state and (observed is not None and path not in observed):
+            return (
+                state,
+                f"你还没读过 {path}。先 look 一次，确认现有内容再用 write_file 覆盖。",
+            )
         if path in state and not action.get("overwrite"):
             return (
                 state,
@@ -27,6 +36,8 @@ def apply(action: dict[str, Any], files: dict[str, str]) -> tuple[dict[str, str]
         path = action["path"]
         if path not in state:
             return state, f"{path} 不存在，先 write_file 建出来（FS_NOT_FOUND）"
+        if observed is not None and path not in observed:
+            return state, f"你还没读过 {path}。先 look 一次，照抄原文再 edit。"
         body = state[path]
         idx = body.find(action["find"])
         if idx < 0:

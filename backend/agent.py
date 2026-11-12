@@ -30,7 +30,8 @@ from .fs import apply as apply_fs
 from .prompt import SYSTEM
 from .actions import normalize
 from .agent_error import AgentError
-from .context import context as build_context
+from .context import content as read_content
+from .context import content as read_content
 from .guards import GENTLE, FIRM, REPEAT_THRESHOLDS, claims_missing, repeat_streak
 from .tools import TOOL_NAME_TO_ACTION, TOOLS, loads
 
@@ -143,6 +144,7 @@ def step(
     files: dict[str, str],
     round_no: int,
     pending_search: str = "",
+    observed: set[str] | None = None,
 ) -> dict[str, Any]:
     """跑一轮，返回下一个动作。"""
     if pending_search:
@@ -160,13 +162,14 @@ def step(
     if round_no >= MAX_ROUNDS:
         return {"event": {"action": "finish", "text": "步数到上限，先停在这里"}, "messages": messages}
 
-    ctx = build_context(files)
     ability = (
         "当前有联网搜索能力，可以用 search 查资料。"
         if search.enabled()
         else "当前没有配置联网搜索，不要使用 search 工具。"
     )
-    system = {"role": "system", "content": f"{SYSTEM}\n\n{ability}\n\n{ctx}"}
+    # system 里只放固定内容，不放文件清单：
+    # 只要这一串不变，模型的上下文缓存就能一直命中
+    system = {"role": "system", "content": f"{SYSTEM}\n\n{ability}"}
 
     # 重复调用：按 3 / 5 / 8 分级处理，先提醒，实在停不下来才收尾
     streak = repeat_streak(messages)
@@ -228,18 +231,23 @@ def step(
 
     if action["action"] == "look":
         path = action.get("path") or ""
+        if observed is not None:
+            if path:
+                observed.add(path)
+            else:
+                observed.update(files)
         if path and files.get(path):
             body = files[path]
             detail = f"=== {path}（{len(body.splitlines())} 行）===\n{body}"
         else:
-            detail = build_context(files)
+            detail = "当前项目：\n" + "\n".join(f"  {p}" for p in files) if files else "项目是空的。"
         return {
             "event": action,
             "messages": _record(messages, assistant, call, {"ok": True, "content": detail[:6000]}),
         }
 
     if action["action"] in {"write", "edit", "delete"}:
-        state, problem = apply_fs(action, files)
+        state, problem = apply_fs(action, files, observed)
         if problem:
             return {
                 "event": {"action": "error", "text": problem},

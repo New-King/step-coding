@@ -62,6 +62,7 @@ class Session:
         self.files: dict[str, str] = dict(files or {})
         self.seq = seq
         self.last_event: Optional[dict[str, Any]] = None
+        self.observed: set[str] = set()
         self.updated_at = time.time()
 
     # ---- 落盘 ----
@@ -73,6 +74,7 @@ class Session:
             "files": self.files,
             "seq": self.seq,
             "last_event": self.last_event,
+            "observed": sorted(self.observed),
             "updated_at": self.updated_at,
         }
 
@@ -99,6 +101,7 @@ class Session:
                 int(data.get("seq") or 0),
             )
             sess.last_event = data.get("last_event")
+            sess.observed = set(data.get("observed") or [])
             sess.updated_at = float(data.get("updated_at") or time.time())
             return sess
         except (OSError, ValueError, KeyError):
