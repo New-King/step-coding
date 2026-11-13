@@ -99,7 +99,6 @@ export class Player {
     this.carry = 0;
     this.waitUntil = 0;
     this.finished = false;
-    this.paused = false;
     this.waiting = false;
     this.banner = "准备开始";
     this.say = "";

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -28,6 +29,13 @@ ROOT = Path(__file__).resolve().parent.parent
 STORE = ROOT / "var" / "sessions"
 MAX_SESSIONS = 40
 MAX_MESSAGES = 80
+
+# 会话 id 会拼进文件路径，只允许安全字符；部署到公网时这是必须的
+SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def valid_id(sid: str) -> bool:
+    return bool(SESSION_ID.fullmatch(sid or ""))
 
 
 class SessionError(RuntimeError):
@@ -53,27 +61,35 @@ class Session:
     def __init__(
         self,
         sid: str,
-        messages: Optional[list[dict[str, str]]] = None,
+        messages: Optional[list[dict[str, Any]]] = None,
         files: Optional[dict[str, str]] = None,
         seq: int = 0,
     ) -> None:
         self.id = sid
-        self.messages: list[dict[str, str]] = list(messages or [])
+        self.messages: list[dict[str, Any]] = list(messages or [])
         self.files: dict[str, str] = dict(files or {})
         self.seq = seq
         self.last_event: Optional[dict[str, Any]] = None
+        self.last_stop = False
         self.observed: set[str] = set()
         self.updated_at = time.time()
+        # 同一会话的 /api/step 串行执行：超时重试和网络抖动不会让同一轮跑两次
+        self.step_lock = threading.Lock()
 
     # ---- 落盘 ----
+
+    def history(self) -> list[dict[str, Any]]:
+        """给客户端恢复现场用的对话历史（已裁剪）。"""
+        return _trim(self.messages)
 
     def dump(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "messages": _trim(self.messages),
+            "messages": self.history(),
             "files": self.files,
             "seq": self.seq,
             "last_event": self.last_event,
+            "last_stop": self.last_stop,
             "observed": sorted(self.observed),
             "updated_at": self.updated_at,
         }
@@ -81,14 +97,17 @@ class Session:
     def save(self) -> None:
         try:
             STORE.mkdir(parents=True, exist_ok=True)
-            (STORE / f"{self.id}.json").write_text(
-                json.dumps(self.dump(), ensure_ascii=False), encoding="utf-8"
-            )
+            path = STORE / f"{self.id}.json"
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self.dump(), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
         except OSError:
             pass
 
     @classmethod
     def load(cls, sid: str) -> Optional["Session"]:
+        if not valid_id(sid):
+            return None
         path = STORE / f"{sid}.json"
         if not path.exists():
             return None
@@ -101,6 +120,11 @@ class Session:
                 int(data.get("seq") or 0),
             )
             sess.last_event = data.get("last_event")
+            # 旧会话文件没有 last_stop：按最后动作推断，回放时也能带回正确的 stop
+            inferred_stop = (sess.last_event or {}).get("action") in {
+                "ask", "say", "finish", "decline"
+            }
+            sess.last_stop = bool(data.get("last_stop", inferred_stop))
             sess.observed = set(data.get("observed") or [])
             sess.updated_at = float(data.get("updated_at") or time.time())
             return sess
@@ -121,6 +145,11 @@ def get(sid: str) -> Optional[Session]:
     sess = Session.load(sid)
     if sess:
         with _lock:
+            # 并发首次加载时，别人可能已经放进去了；用同一个对象，别各拿一把锁
+            existing = _sessions.get(sid)
+            if existing:
+                _sessions.move_to_end(sid)
+                return existing
             _sessions[sid] = sess
             _sessions.move_to_end(sid)
     return sess
@@ -137,6 +166,8 @@ def put(sess: Session) -> None:
 def drop(sid: str) -> None:
     with _lock:
         _sessions.pop(sid, None)
+    if not valid_id(sid):
+        return
     try:
         (STORE / f"{sid}.json").unlink(missing_ok=True)
     except OSError:

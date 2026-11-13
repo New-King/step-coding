@@ -22,6 +22,7 @@ type Event =
       action: "search";
       query: string;
       results?: { title: string; url: string; snippet: string; site?: string }[];
+      error?: string;
     }
   | { action: "plan"; steps: string[] }
   | { action: "ask"; questions: { question: string; options: string[] }[] }
@@ -43,11 +44,14 @@ type Item = {
   ms?: number;
 };
 
+/** 服务端的 messages 里有 tool_calls 等嵌套结构，前端只负责原样存回。 */
+type ChatMessage = { role: string; content?: string; tool_calls?: unknown[] };
+
 type SavedSession = {
   id: string;
   items: Item[];
   files: Record<string, string>;
-  messages: { role: string; content: string }[];
+  messages: ChatMessage[];
   round: number;
   pending: { question: string; options: string[] }[] | null;
   askIndex: number;
@@ -64,6 +68,7 @@ type HistoryItem = {
   items: Item[];
   base: Record<string, string>;
   files: Record<string, string>;
+  round?: number;
   updatedAt?: number;
 };
 
@@ -168,7 +173,7 @@ export default function App() {
   );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
 
-  const messagesRef = useRef<{ role: string; content: string }[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const filesRef = useRef<Record<string, string>>({});
   const startFilesRef = useRef<Record<string, string>>({});
   const serverFilesRef = useRef<Record<string, string>>({});
@@ -181,13 +186,9 @@ export default function App() {
   const pumpingRef = useRef(false);
   const pendingSearchRef = useRef("");
   const pendingMessageRef = useRef<string | null>(null);
-  const pausedRef = useRef(false);
-  const blockedRef = useRef(false);
   const lastMsRef = useRef(0);
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
-  const runningRef = useRef(false);
-  const waitingRef = useRef(false);
   const stepLabelRef = useRef("");
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -206,13 +207,7 @@ export default function App() {
     pending,
     askIndex,
     askAnswers,
-    status: pausedRef.current
-      ? "paused"
-      : runningRef.current
-        ? "running"
-        : waitingRef.current
-          ? "waiting"
-          : "done",
+    status: statusRef.current === "idle" ? "done" : statusRef.current,
     started,
     savedAt: Date.now(),
   });
@@ -298,7 +293,11 @@ export default function App() {
     const value = task.trim();
     if (!value) return;
 
-    playerRef.current!.stop();
+    const player = playerRef.current!;
+    player.stop();
+    player.paused = false;
+    player.setBuffers({});
+    setPaused(false);
     setStarted(true);
     setError(null);
     setPending(null);
@@ -312,14 +311,22 @@ export default function App() {
     idRef.current = 0;
     filesRef.current = {};
     startFilesRef.current = {};
+    serverFilesRef.current = {};
+    pendingSearchRef.current = "";
+    pendingCardRef.current = null;
+    pendingMessageRef.current = value;
     sessionIdRef.current = `s-${Date.now()}`;
     seqRef.current = 0;
-    waitingRef.current = false;
     messagesRef.current = [];
-    push({ action: "user", text: value } as Event);
-
-    setRunning(true);
+    setSnap(EMPTY);
+    setAskIndex(0);
+    setAskAnswers([]);
+    setAnswer("");
     answeringRef.current = false;
+    statusRef.current = "running";
+    setRunning(true);
+    push({ action: "user", text: value } as Event);
+    saveSession();
 
     try {
       await request("/api/session", {
@@ -333,12 +340,11 @@ export default function App() {
       note("session.error", msg);
       setError(msg);
       push({ action: "error", text: msg } as Event);
+      statusRef.current = "done";
       setRunning(false);
-        return;
+      return;
     }
 
-    pendingMessageRef.current = value;
-    statusRef.current = "running";
     await pump();
   };
 
@@ -433,9 +439,9 @@ export default function App() {
       setPending(ev.questions);
       setAskIndex(0);
       setAskAnswers([]);
-      waitingRef.current = true;
       statusRef.current = "waiting";
       setRunning(false);
+      saveSession();
       window.setTimeout(() => composerRef.current?.focus(), 60);
       return true;
     }
@@ -512,8 +518,7 @@ export default function App() {
     if (p.busy) p.finishNow();
 
     setPeek(null);
-    p.paused = false;
-    setPaused(false);
+    // 暂停时不要把 paused 重置掉：这一步可以推到时间线，但先不演
     p.load({
       task: ev.label,
       steps: [step],
@@ -551,9 +556,7 @@ export default function App() {
       (i) => i.kind === "user" && i.ev.action === "user"
     );
     const title =
-      firstUser && firstUser.ev.action === "user"
-        ? firstUser.ev.text.slice(0, 26)
-        : "最近一次";
+      firstUser && firstUser.ev.action === "user" ? titleOf(firstUser.ev.text) : "新项目";
     const item: HistoryItem = {
       id: "",
       title,
@@ -561,6 +564,7 @@ export default function App() {
       items: itemsRef.current,
       base: startFilesRef.current,
       files,
+      round: seqRef.current,
     };
     // 一次操作 = 一个项目：按会话 id 认，增删文件都还是同一条
     const sid = sessionIdRef.current || `s-${Date.now()}`;
@@ -612,14 +616,14 @@ export default function App() {
         ? text
         : pending.map((q, i) => `${q.question} → ${next[i]}`).join("\n");
 
-    push({ action: "user", text: payload } as Event);
+    statusRef.current = "running";
     pendingMessageRef.current = payload;
     setPending(null);
     setAskAnswers([]);
     setAskIndex(0);
-    waitingRef.current = false;
     setRunning(true);
-    statusRef.current = "running";
+    push({ action: "user", text: payload } as Event);
+    saveSession();
     await pump();
   };
 
@@ -645,10 +649,13 @@ export default function App() {
       return;
     }
 
-    push({ action: "user", text: value } as Event);
-    pendingMessageRef.current = value;
+    playerRef.current!.paused = false;
+    setPaused(false);
     statusRef.current = "running";
+    pendingMessageRef.current = value;
     setRunning(true);
+    push({ action: "user", text: value } as Event);
+    saveSession();
     await pump();
   };
 
@@ -665,10 +672,10 @@ export default function App() {
     filesRef.current = saved.files;
     messagesRef.current = saved.messages ?? [];
     seqRef.current = saved.round ?? 0;
-    seqRef.current = saved.round ?? 0;
     idRef.current = saved.items.reduce((m, i) => Math.max(m, i.id), 0);
     setError(null);
-
+    playerRef.current!.paused = false;
+    setPaused(false);
     playerRef.current!.setBuffers(saved.files);
     setSnap((prev) => ({ ...prev, buffers: saved.files, active: Object.keys(saved.files)[0] ?? null }));
 
@@ -681,10 +688,12 @@ export default function App() {
         seq: saved.round ?? 0,
       });
       seqRef.current = sync.seq ?? seqRef.current;
+      if (sync.messages) messagesRef.current = sync.messages;
       if (sync.files) {
         filesRef.current = sync.files;
         playerRef.current!.setBuffers(sync.files);
       }
+      note("session.restore", `服务端 seq=${sync.seq}`);
     } catch (e) {
       note("session.restore", String(e).replace(/^Error:\s*/, ""));
     }
@@ -693,27 +702,23 @@ export default function App() {
       setPending(saved.pending);
       setAskIndex(saved.askIndex ?? 0);
       setAskAnswers(saved.askAnswers ?? []);
-      waitingRef.current = true;
       setRunning(false);
-        note("resume", "恢复到待回答");
+      statusRef.current = "waiting";
+      note("resume", "恢复到待回答");
       return;
     }
 
-    waitingRef.current = false;
     setPending(null);
 
     if (saved.status === "running" || saved.status === "paused") {
-      pausedRef.current = false;
-      blockedRef.current = false;
-      playerRef.current!.paused = false;
-      setPaused(false);
       setRunning(true);
       statusRef.current = "running";
       note("resume", "接着跑");
       void pump();
     } else {
       setRunning(false);
-        note("resume", "恢复到已完成");
+      statusRef.current = "done";
+      note("resume", "恢复到已完成");
     }
   };
 
@@ -727,7 +732,7 @@ export default function App() {
   const goHome = () => {
     playerRef.current!.stop();
     playerRef.current!.paused = true;
-    pausedRef.current = true;
+    setPaused(true);
     stopRun();
     const snap = snapshot();
     try {
@@ -743,7 +748,7 @@ export default function App() {
   const clearAll = () => {
     playerRef.current!.stop();
     playerRef.current!.paused = false;
-    pausedRef.current = false;
+    setPaused(false);
     stopRun();
     try {
       localStorage.removeItem(SESSION_KEY);
@@ -756,10 +761,22 @@ export default function App() {
     setItems([]);
     itemsRef.current = [];
     setPending(null);
+    setAnswer("");
+    setAskIndex(0);
+    setAskAnswers([]);
+    setDeclined(null);
     setError(null);
     filesRef.current = {};
+    startFilesRef.current = {};
+    serverFilesRef.current = {};
     messagesRef.current = [];
+    pendingSearchRef.current = "";
+    pendingCardRef.current = null;
+    pendingMessageRef.current = null;
+    idRef.current = 0;
+    seqRef.current = 0;
     sessionIdRef.current = "";
+    statusRef.current = "idle";
   };
 
   const togglePause = () => {
@@ -776,8 +793,9 @@ export default function App() {
       statusRef.current = "running";
       setRunning(true);
       note("resume", "继续");
-      void pump();
     }
+    saveSession();
+    if (!next) void pump();
   };
 
   const replay = () => {
@@ -795,13 +813,90 @@ export default function App() {
     }
     if (!steps.length) return;
     filesRef.current = { ...files };
-    playerRef.current!.load({
+    const player = playerRef.current!;
+    player.paused = false;
+    setPaused(false);
+    player.load({
       task: "重播",
       steps,
       files: Object.keys(files).length ? files : { "": "" },
       initial: files,
       stats: { files: Object.keys(files).length, steps: steps.length, lines: 0 },
     });
+  };
+
+  /** 打开「最近」里的旧项目：先和服务端对齐 seq / messages / files。 */
+  const openHistory = async (item: HistoryItem) => {
+    const player = playerRef.current!;
+    player.stop();
+    player.paused = false;
+    setPaused(false);
+    setStarted(true);
+    setError(null);
+    setDeclined(null);
+    setPending(null);
+    setAskIndex(0);
+    setAskAnswers([]);
+    setAnswer("");
+    setRunning(false);
+    statusRef.current = "done";
+    sessionIdRef.current = item.id;
+    itemsRef.current = item.items;
+    setItems(item.items);
+    filesRef.current = item.files;
+    startFilesRef.current = item.base ?? {};
+    serverFilesRef.current = item.files;
+    pendingSearchRef.current = "";
+    pendingCardRef.current = null;
+    messagesRef.current = [];
+    seqRef.current = item.round ?? 0;
+    idRef.current = item.items.reduce((m, i) => Math.max(m, i.id), 0);
+    player.setBuffers(item.files);
+    setSnap({
+      ...EMPTY,
+      buffers: item.files,
+      active: Object.keys(item.files)[0] ?? null,
+      finished: true,
+    });
+
+    let sync: {
+      seq?: number;
+      files?: Record<string, string>;
+      messages?: ChatMessage[];
+    } | null = null;
+
+    try {
+      // 只带 id：会话还在就原样拿回来
+      const fresh = await request("/api/session", { id: item.id });
+      sync = fresh;
+      note("history.sync", `seq=${fresh.seq}`);
+    } catch (e) {
+      note("history.rebuild", `服务端没有这个会话，按本地文件重建：${String(e)}`);
+      try {
+        sync = await request("/api/session", {
+          id: item.id,
+          messages: [],
+          files: item.files,
+          seq: item.round ?? 0,
+        });
+      } catch (err) {
+        setError(String(err).replace(/^Error:\s*/, ""));
+        return;
+      }
+    }
+
+    if (!sync) return;
+    seqRef.current = sync.seq ?? seqRef.current;
+    messagesRef.current = sync.messages ?? [];
+    const files = sync.files ?? item.files;
+    filesRef.current = files;
+    serverFilesRef.current = files;
+    player.setBuffers(files);
+    setSnap((prev) => ({
+      ...prev,
+      buffers: files,
+      active: Object.keys(files)[0] ?? null,
+    }));
   };
 
   /* ------------------------------------------------------------ 展示 */
@@ -811,7 +906,7 @@ export default function App() {
   );
   const projectTitle =
     firstUserItem && firstUserItem.ev.action === "user"
-      ? firstUserItem.ev.text.slice(0, 22)
+      ? titleOf(firstUserItem.ev.text, 22)
       : "新项目";
 
   const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
@@ -1003,16 +1098,7 @@ export default function App() {
                 <button
                   key={i}
                   className="history-item"
-                  onClick={() => {
-                    setStarted(true);
-                    sessionIdRef.current = item.id;
-                    setItems(item.items);
-                    itemsRef.current = item.items;
-                    filesRef.current = item.files;
-                    startFilesRef.current = item.base ?? {};
-                    playerRef.current!.setBuffers(item.files);
-                    setDeclined(null);
-                  }}
+                  onClick={() => void openHistory(item)}
                 >
                   <span className="hi-title">{item.title || "最近一次"}</span>
                   <span className="hi-meta">
@@ -1335,6 +1421,12 @@ function hostOf(url: string) {
   }
 }
 
+function titleOf(text: string, max = 24) {
+  const one = (text || "").replace(/\s+/g, " ").trim();
+  if (!one) return "新项目";
+  return one.length > max ? `${one.slice(0, max)}…` : one;
+}
+
 function timeAgo(ts: number) {
   const min = Math.floor((Date.now() - ts) / 60000);
   if (min < 1) return "刚刚";
@@ -1388,7 +1480,10 @@ function TimelineItem({
 
         {!done && <div className="ws-waiting">正在搜…</div>}
 
+        {done && ev.error && <div className="ws-waiting">搜索失败：{ev.error}</div>}
+
         {done &&
+          !ev.error &&
           (ev.results!.length > 0 ? (
             <div className="ws-grid">
               {ev.results!.slice(0, 4).map((r, i) => (
