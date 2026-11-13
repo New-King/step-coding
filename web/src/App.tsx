@@ -42,6 +42,8 @@ type Item = {
   picked?: string;
   at?: number;
   ms?: number;
+  /** finish 等收尾动作：动画还没演完，先不展示"已完成" */
+  pending?: boolean;
 };
 
 /** 服务端的 messages 里有 tool_calls 等嵌套结构，前端只负责原样存回。 */
@@ -207,6 +209,8 @@ export default function App() {
   const pumpingRef = useRef(false);
   const pendingSearchRef = useRef("");
   const pendingMessageRef = useRef<string | null>(null);
+  /** 收尾动作（finish / say / decline）等当前文件演完再执行 */
+  const afterPlayerRef = useRef<(() => void) | null>(null);
   const lastMsRef = useRef(0);
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
@@ -266,7 +270,7 @@ export default function App() {
     setItems(itemsRef.current);
   };
 
-  const push = (ev: Event, extra: { ms?: number } = {}) => {
+  const push = (ev: Event, extra: { ms?: number; pending?: boolean } = {}) => {
     const item: Item = {
       id: (idRef.current += 1),
       kind: ev.action,
@@ -277,6 +281,7 @@ export default function App() {
     itemsRef.current = [...itemsRef.current, item];
     setItems(itemsRef.current);
     saveSession();
+    return item;
   };
 
   useEffect(() => {
@@ -286,6 +291,11 @@ export default function App() {
     p.onFinish = () => {};
     p.onExhausted = () => {
       filesRef.current = p.files();
+      const after = afterPlayerRef.current;
+      if (after) {
+        afterPlayerRef.current = null;
+        after();
+      }
     };
 
     let hasSaved = false;
@@ -323,6 +333,7 @@ export default function App() {
     player.stop();
     player.paused = false;
     player.setBuffers({});
+    afterPlayerRef.current = null;
     setPaused(false);
     setStarted(true);
     setError(null);
@@ -430,9 +441,30 @@ export default function App() {
     }
   };
 
-  const pushStep = (ev: Event) => {
-    push(ev, { ms: lastMsRef.current });
+  const pushStep = (ev: Event, extra: { pending?: boolean } = {}) => {
+    push(ev, { ms: lastMsRef.current, ...extra });
     lastMsRef.current = 0;
+  };
+
+  /** 动画演完：把「正在收尾」的占位换回真正的结果。 */
+  const settlePending = () => {
+    if (!itemsRef.current.some((it) => it.pending)) return;
+    itemsRef.current = itemsRef.current.map((it) =>
+      it.pending ? { ...it, pending: false } : it
+    );
+    setItems(itemsRef.current);
+  };
+
+  /**
+   * 收尾动作要等当前文件演完。
+   *
+   * 循环和动画是解耦的：模型可能在一个大文件刚开始打字时就返回 finish。
+   * 如果立刻切「已完成」，步骤框、文件 loading 都会消失，但代码还在写。
+   */
+  const afterAnimation = (fn: () => void): true => {
+    if (playerRef.current!.busy) afterPlayerRef.current = fn;
+    else fn();
+    return true;
   };
 
   /** 处理一个动作。返回 true 表示这一轮到此为止。 */
@@ -488,23 +520,27 @@ export default function App() {
 
     if (ev.action === "say") {
       pushStep(ev);
-      stopRun();
-      window.setTimeout(() => composerRef.current?.focus(), 60);
-      return true;
+      return afterAnimation(() => {
+        stopRun();
+        window.setTimeout(() => composerRef.current?.focus(), 60);
+      });
     }
 
     if (ev.action === "decline") {
       pushStep(ev);
       setPending(null);
       setDeclined(ev);
-      stopRun();
-      return true;
+      return afterAnimation(() => stopRun());
     }
 
     if (ev.action === "finish") {
-      pushStep(ev);
-      finish(ev.text);
-      return true;
+      // 先占位成「正在收尾」：正文和自检都等当前文件演完再出现
+      pushStep(ev, { pending: true });
+      if (Object.keys(filesRef.current).length > 0) remember(filesRef.current);
+      return afterAnimation(() => {
+        settlePending();
+        finish(ev.text);
+      });
     }
 
     note("loop.unknown", JSON.stringify(ev).slice(0, 120));
@@ -764,6 +800,17 @@ export default function App() {
     playerRef.current!.stop();
     playerRef.current!.paused = true;
     setPaused(true);
+
+    // 收尾动作已经在等了：这次其实做完了，不要留一张「没做完」的卡
+    const after = afterPlayerRef.current;
+    afterPlayerRef.current = null;
+    if (after) {
+      after();
+      setResumable(null);
+      setStarted(false);
+      return;
+    }
+
     stopRun();
     const snap = snapshot();
     try {
@@ -804,6 +851,7 @@ export default function App() {
     pendingSearchRef.current = "";
     pendingCardRef.current = null;
     pendingMessageRef.current = null;
+    afterPlayerRef.current = null;
     idRef.current = 0;
     seqRef.current = 0;
     sessionIdRef.current = "";
@@ -826,10 +874,15 @@ export default function App() {
       note("resume", "继续");
     }
     saveSession();
-    if (!next) void pump();
+    // 收尾动画还在演：只恢复播放，不再请求下一步
+    if (!next && !afterPlayerRef.current) void pump();
   };
 
   const replay = () => {
+    const after = afterPlayerRef.current;
+    afterPlayerRef.current = null;
+    after?.();
+
     const files = startFilesRef.current;
     const steps: Step[] = [];
     for (const item of itemsRef.current) {
@@ -861,6 +914,7 @@ export default function App() {
     const player = playerRef.current!;
     player.stop();
     player.paused = false;
+    afterPlayerRef.current = null;
     setPaused(false);
     setStarted(true);
     setError(null);
@@ -872,8 +926,9 @@ export default function App() {
     setRunning(false);
     statusRef.current = "done";
     sessionIdRef.current = item.id;
-    itemsRef.current = item.items;
-    setItems(item.items);
+    const items = item.items.map((it) => (it.pending ? { ...it, pending: false } : it));
+    itemsRef.current = items;
+    setItems(items);
     filesRef.current = item.files;
     startFilesRef.current = item.base ?? {};
     serverFilesRef.current = item.files;
@@ -881,7 +936,7 @@ export default function App() {
     pendingCardRef.current = null;
     messagesRef.current = [];
     seqRef.current = item.round ?? 0;
-    idRef.current = item.items.reduce((m, i) => Math.max(m, i.id), 0);
+    idRef.current = items.reduce((m, i) => Math.max(m, i.id), 0);
     player.setBuffers(item.files);
     setSnap({
       ...EMPTY,
@@ -1705,8 +1760,8 @@ function TimelineItem({
   }
 
   return (
-    <div className="tl finish">
-      {ev.text || "完成"}
+    <div className={`tl finish ${item.pending ? "pending" : ""}`}>
+      {item.pending ? "正在收尾…" : ev.text || "完成"}
     </div>
   );
 }

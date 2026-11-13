@@ -1304,6 +1304,11 @@ button {
   color: var(--ink);
 }
 
+.tl.finish.pending {
+  color: var(--muted);
+  background: #fafafa;
+}
+
 /* ---- 追问卡片 ---- */
 .ask-card {
   padding: 12px;
