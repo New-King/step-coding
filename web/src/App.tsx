@@ -72,6 +72,27 @@ type HistoryItem = {
   updatedAt?: number;
 };
 
+const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
+
+/**
+ * 这次现场是不是正常收尾了。
+ *
+ * 只看 status 不够：旧版本在 say / decline / 无文件的 finish 之后没有落盘状态，
+ * 会留下 "running"。所以再看时间线里最后一次收尾动作是否在最后一句用户消息之后。
+ */
+function endedNormally(saved: SavedSession): boolean {
+  if (saved.status === "done") return true;
+  if (saved.pending?.length) return false;
+
+  let lastTerminal = -1;
+  let lastUser = -1;
+  saved.items.forEach((item, i) => {
+    if (item.kind === "user") lastUser = i;
+    if (TERMINAL_KINDS.has(item.kind)) lastTerminal = i;
+  });
+  return lastTerminal > lastUser;
+}
+
 const EMPTY: Snapshot = {
   buffers: {},
   active: null,
@@ -272,16 +293,21 @@ export default function App() {
       const raw = localStorage.getItem(SESSION_KEY);
       const saved = raw ? (JSON.parse(raw) as SavedSession) : null;
       if (saved && Array.isArray(saved.items) && saved.items.length > 0) {
-        setResumable(saved);
+        // 正常收尾的现场不弹「上次没做完」，也不该点一下就自动再发一轮
+        if (!endedNormally(saved)) setResumable(saved);
         hasSaved = true;
       }
     } catch {
       /* 读不出来就算了 */
     }
 
-    // 有现场就别用 ?q= 重开一轮，否则会把现场覆盖掉
+    // 有现场就别用 ?q= 重开一轮，否则会把现场覆盖掉。
+    // 不管用没用，都把 q 从地址栏摘掉，避免下次刷新又自动发一遍。
     const q = new URLSearchParams(window.location.search).get("q");
-    if (q && !hasSaved) window.setTimeout(() => void start(q), 80);
+    if (q) {
+      if (!hasSaved) window.setTimeout(() => void start(q), 80);
+      window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+    }
 
     return () => p.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -342,6 +368,7 @@ export default function App() {
       push({ action: "error", text: msg } as Event);
       statusRef.current = "done";
       setRunning(false);
+      saveSession();
       return;
     }
 
@@ -363,6 +390,7 @@ export default function App() {
           pushStep({ action: "finish", text: "步数到上限，先停在这里" });
           statusRef.current = "done";
           setRunning(false);
+          saveSession();
           break;
         }
 
@@ -395,6 +423,7 @@ export default function App() {
       pushStep({ action: "error", text: msg } as Event);
       statusRef.current = "done";
       setRunning(false);
+      saveSession();
     } finally {
       pumpingRef.current = false;
       note("pump", `exit status=${statusRef.current}`);
@@ -535,6 +564,7 @@ export default function App() {
 
     const files = filesRef.current;
     if (Object.keys(files).length === 0) {
+      saveSession();
       note("finish", "没有产生文件，跳过自检");
       return;
     }
@@ -725,6 +755,7 @@ export default function App() {
   const stopRun = () => {
     statusRef.current = "done";
     setRunning(false);
+    saveSession();
     note("stop", "本轮结束");
   };
 
@@ -1046,7 +1077,9 @@ export default function App() {
             {resumable && (
               <div className="resume-card">
                 <div className="resume-body">
-                  <div className="resume-title">上次没做完</div>
+                  <div className="resume-title">
+                  {resumable.status === "waiting" ? "上次没答完" : "上次没做完"}
+                </div>
                   <div className="resume-text">
                     {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
                       ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
