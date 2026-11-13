@@ -89,7 +89,7 @@
 
 ## 超出范围：不关门，把需求翻译成能做的事
 
-![挡回去](/Users/nujabes/projects/step-coding/docs/32-decline.png)
+![挡回去](docs/32-decline.png)
 
 拒绝是一个**方法**，不是一张话术模板：
 
@@ -150,6 +150,9 @@ SEARCH_API_KEY=...
 **一次进来 = 一个项目。** 后面加文件、删文件、改内容，都还是同一条记录，
 不会每动一次就多一条。
 
+标题自动取你说的第一句话。点开旧记录时，前端先向服务端同步 `seq / messages / files`，
+再接着问下一步——不会出现"第一句话被回放吞掉"的情况。
+
 （点到某条旧记录继续改，也是更新那一条。）
 
 ![最近](docs/33-history.png)
@@ -200,13 +203,15 @@ SEARCH_API_KEY=...
 - **幂等**：同一 `seq` 重发直接回放上次结果，所以客户端可以放心重试；
   网络抖一下不会把这一轮跑两遍
 - **单一驱动**：只有一个 `pump()` 循环在推进，没有多个 setTimeout 抢着请求
+- **同一会话串行**：服务端每个会话一把锁，超时后的重试不会让同一轮跑两遍
 - **动画不阻塞循环**：模型返回就继续，播放器只负责把变化演出来；新动作到达时
   上一段直接收尾，不会因为"打字慢"把后面的步骤堵住
 - **会话落盘**：服务重启后还能用 `/api/session` 把现场接回来
 
 ## 出错怎么查
 
-后端每条请求都写 JSON 到 `logs/trace.jsonl`，前端右上角「日志 N」能看到同样的过程（`?trace=1` 默认展开）。
+前端右上角「日志 N」记录每次发送、事件和状态迁移（`?trace=1` 默认展开）。
+后端没有额外埋点：排障看 uvicorn stdout 和 `var/sessions/<id>.json`（能直接看到 messages / files / last_event）。
 
 ```
 17:58:23  send      写一个登录页面
@@ -216,7 +221,8 @@ SEARCH_API_KEY=...
 17:58:33  write     index.html
 ```
 
-还有 75 秒看门狗，超时放开输入，不会一直转圈。
+模型调用默认 180 秒超时；429 / 5xx 自动重试一次；输出被 `max_tokens` 截断时，
+会提示模型把文件拆小再试，而不是把半截 JSON 当成合法参数。
 
 ---
 
@@ -224,27 +230,63 @@ SEARCH_API_KEY=...
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install fastapi "uvicorn[standard]"
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env          # 填 DEEPSEEK_API_KEY
 cd web && pnpm install && pnpm build && cd ..
 .venv/bin/python -m uvicorn backend.main:app --port 8790
 open http://127.0.0.1:8790
 ```
 
-纯网页，不碰本地文件、不执行命令。
+纯网页，生成的代码不碰本地磁盘、不执行命令。服务端只把会话存在 `var/sessions/`。
+
+可调参数（都有默认值，写在 `.env` 里即可）：
+
+```bash
+LLM_TIMEOUT=180       # 单次模型调用超时（秒）
+LLM_MAX_TOKENS=6000   # 单次输出上限；大文件被截断就往上调
+LLM_RETRIES=1         # 超时 / 429 / 5xx 的重试次数
+```
+
+## 测试
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+```
+
+用脚本化的假模型跑断言，**不花 API 费用**，覆盖：
+
+- 动作参数校验、`write` 覆盖保护、`edit` 必须逐字命中
+- 幂等 `seq`、回放、会话恢复、同一 `seq` 并发只执行一次
+- 模型超时 / 5xx 重试、输出截断检测
+- 完整一轮：`think → plan → write → finish`，以及「说写了其实没写」的守卫
+
+真实模型的「任务通过率」是另一层评测：固定任务集 + 期望动作/最终文件断言，
+需要 API key；主观质量才需要 LLM 裁判或人工抽检。前端目前靠 `pnpm build`（含 `tsc`）
+加 headless Chrome 点测，等拆 `App.tsx` 时再引 Vitest。
 
 ## 结构
 
 ```
 backend/
-├── main.py     POST /api/step —— 带着消息历史和当前文件问下一个动作
-└── agent.py    动作协议、上下文拼装、edit 校验
+├── main.py      /api/session、/api/step：会话、幂等 seq、并发锁
+├── agent.py     唯一的循环：调模型 → 执行工具 → 回事件
+├── tools.py     工具 schema（唯一一份）
+├── actions.py   tool_call → 内部动作，参数校验
+├── prompt.py    系统提示词
+├── context.py   look 用的项目清单 / 正文
+├── fs.py        文件操作与写入 / 编辑保护
+├── guards.py    撒谎守卫 + 重复守卫
+├── session.py   会话：内存 LRU + 落盘 + 增量 diff + id 校验
+└── search.py    联网搜索
 
 web/src/
-├── App.tsx     驱动循环：拿到动作 → 播 → 再问下一个
-├── player.ts   把 write/edit 演出来（逐字、可在中间插入）
-├── check.ts    写完自检：引用、类名、id、括号
-└── zip.ts      导出代码
+├── App.tsx      驱动循环、三栏布局、时间线、历史 / 恢复
+├── player.ts    把 write/edit 演出来（逐字、可在中间插入）
+├── check.ts     写完自检：引用、类名、id、括号
+└── zip.ts       导出代码
+
+tests/           断言 / 回归测试（假模型，不花钱）
 ```
 
 ## 它不做什么
@@ -252,6 +294,6 @@ web/src/
 | | 为什么 |
 |---|---|
 | 不跑代码 | 要的是看懂，不是部署 |
-| 不联网调研 | 没有搜索能力，硬编一个假的不如不做 |
+| 不执行本地命令 | 生成的代码在浏览器内存里，只有导出才下载 |
 | 不做账号 / 进度 | 它不是课程 |
 | 默认不引框架 | 小例子引框架，噪音比内容多 |

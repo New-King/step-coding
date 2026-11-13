@@ -31,18 +31,21 @@ cd step-coding
 
 # 后端
 python3 -m venv .venv
-.venv/bin/pip install fastapi "uvicorn[standard]"
+.venv/bin/pip install -r requirements-dev.txt   # 含 pytest / httpx，跑测试用
 cp .env.example .env          # 填 DEEPSEEK_API_KEY
 .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8790
 
 # 前端（另开一个终端）
 cd web && pnpm install && pnpm build     # build 会先跑 tsc --noEmit
+
+# 测试（假模型，不花 API 费用）
+.venv/bin/python -m pytest -q
 ```
 
 打开 http://127.0.0.1:8790 。
 
 改前端代码之后**必须重新 `pnpm build`**（没有 HMR，FastAPI 直接托管 `web/dist`）。
-改后端会由 uvicorn 自动 reload。
+改后端时，如果 uvicorn 没带 `--reload`，记得手动重启，否则 `/api/session` 还是旧响应。
 
 健康检查：`curl localhost:8790/api/health`
 
@@ -58,19 +61,33 @@ cd web && pnpm install && pnpm build     # build 会先跑 tsc --noEmit
 浏览器（React）
   ├─ 驱动循环：POST /api/step（只发 session_id + seq + 本条用户消息）
   ├─ 收到 1 个动作 → 渲染时间线 → 文件动作交给 player 逐字"演"出来
-  └─ 现场快照存 localStorage（刷新/返回可恢复）
+  ├─ 现场快照存 localStorage（刷新/返回可恢复）
+  └─ 首页「最近」存 items + files 副本；点开时先 POST /api/session 同步 seq/messages/files
 
 服务端（FastAPI）
   ├─ 会话在内存 + 落盘（var/sessions/<id>.json）
   ├─ 每轮一次 function calling：模型返回 tool_calls[0]
   ├─ 执行工具（改文件 / 搜索 / 记录）
+  ├─ 同一会话的 /api/step 串行执行（step_lock），重试不会让同一轮跑两遍
   └─ 只回变化的文件（changed），不回整份
 ```
 
-**关键点：循环由前端驱动。** 服务端是无状态的单步执行器（会话状态在服务端，
+**关键点：循环由前端驱动。** 服务端是单步执行器（会话状态在服务端，
 但"何时请求下一步"由前端决定）。这样做是为了让每一步都能在界面上停下来。
 
 ### 一轮请求的完整形状
+
+```
+POST /api/session
+{ "id": "s-..." }                    # 只带 id：恢复已有会话，返回 seq / files / messages
+{ "id": "s-...", "messages": [...], "files": {...}, "seq": 3 }   # 服务端没有时按本地镜像重建
+
+→ 200
+{
+  "id": "s-...", "seq": 3, "files": {...}, "messages": [...],
+  "last_event": {...}, "last_stop": false, "restored": true
+}
+```
 
 ```
 POST /api/step
@@ -86,8 +103,11 @@ POST /api/step
 ```
 
 - `seq` 必须等于服务端当前 seq：小了 → **回放上次结果**（幂等，可安全重试）；大了 → 409。
+  **带新 `message` 时不能依赖回放**——回放不会追加消息。前端续做旧会话前必须先同步 seq。
 - `message` 只有"用户这一轮说的话"才带；继续跑下一步时为 null。
 - `pending_search` 用于两段式搜索：先返回"正在搜"，再由前端带着 query 请求一次拿结果。
+- `stop` 会随回放一起返回（`last_stop` 落盘）；旧会话文件没有该字段时按 `last_event` 推断。
+- 会话 id 只允许 `[A-Za-z0-9_-]{1,64}`；它会拼进文件路径，别放宽。
 
 ---
 
@@ -125,16 +145,18 @@ schema 在 `backend/tools.py`，名字 → 动作的映射也在那里。
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `main.py` | ~138 | FastAPI 路由、会话端点 |
-| `agent.py` | ~270 | **唯一的循环**：调模型 → 执行 → 返回事件 |
+| `main.py` | ~152 | FastAPI 路由、会话端点、`step_lock` 串行执行 |
+| `agent.py` | ~342 | **唯一的循环**：调模型 → 重试/截断处理 → 执行 → 返回事件 |
 | `tools.py` | ~85 | 工具 schema（唯一一份，既给模型也用来自省） |
 | `actions.py` | ~112 | tool_call → 内部动作，**唯一做参数校验的地方** |
-| `prompt.py` | ~57 | 系统提示词 |
-| `context.py` | ~29 | 给模型看的项目上下文 |
-| `fs.py` | ~39 | 文件操作 + 写入/编辑保护 |
+| `prompt.py` | ~60 | 系统提示词 |
+| `context.py` | ~31 | `look` 用的项目清单 / 正文 |
+| `fs.py` | ~50 | 文件操作 + 写入/编辑保护 |
 | `guards.py` | ~72 | 撒谎守卫 + 重复守卫 |
-| `session.py` | ~151 | 服务端会话：内存 LRU + 落盘 + 增量 diff |
-| `search.py` | ~164 | 联网搜索（默认 DeepSeek 自研 Search API） |
+| `session.py` | ~185 | 会话：内存 LRU + 原子落盘 + ids 校验 + 增量 diff |
+| `search.py` | ~165 | 联网搜索（默认 DeepSeek 自研 Search API） |
+| `agent_error.py` | ~11 | `AgentError` / `TruncatedError` |
+| `tests/` | — | 假模型断言 / 回归测试，见第 9 节 |
 
 ### 会话文件长什么样
 
@@ -147,12 +169,15 @@ schema 在 `backend/tools.py`，名字 → 动作的映射也在那里。
   "files": {"index.html": "<!doctype html>…"},
   "seq": 6,
   "last_event": {"action":"write",...},
+  "last_stop": false,
+  "observed": ["index.html"],
   "updated_at": 1794480000.0
 }
 ```
 
 注意：`messages` 是完整的 OpenAI 工具调用历史，裁剪时要保证
 `assistant(tool_calls)` 和它的 `tool` 结果不被拆散（`session.py::_trim` 已处理）。
+落盘走 `*.json.tmp` + `replace`，崩溃时不会留下半截 JSON。
 
 ---
 
@@ -160,8 +185,8 @@ schema 在 `backend/tools.py`，名字 → 动作的映射也在那里。
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `App.tsx` | ~1500 | 循环驱动、三栏布局、时间线、提问卡、恢复现场 |
-| `player.ts` | ~317 | 播放器：把 write/edit 逐字"演"出来，支持中途 splice |
+| `App.tsx` | ~1611 | 循环驱动、三栏布局、时间线、提问卡、历史 / 恢复现场 |
+| `player.ts` | ~316 | 播放器：把 write/edit 逐字"演"出来，支持中途 splice |
 | `check.ts` | ~121 | 写完自检：引用/类名/id/括号 |
 | `zip.ts` | ~112 | 前端打 zip（STORE + CRC32，不引依赖） |
 
@@ -186,6 +211,15 @@ idle → running → (paused | waiting | done)
 | 刷新 | 同上（localStorage + 服务端会话都能接回） |
 
 **运行中不接受输入**（输入框 disabled）。这是刻意的：不要偷偷做"插话排队"，语义会糊。
+
+### 历史续做（2026-11 修过）
+
+- 首页「最近」最多 6 条，存在 localStorage，每条带 `items / files / base / round`。
+- 点开旧项目时走 `openHistory()`：先 `POST /api/session { id }` 同步 `seq / messages / files`；
+  服务端没这个会话时，用本地 `files` 重建，`messages` 为空（模型上下文会丢，文件不丢）。
+- **打开前必须同步 `seq`**。否则带新消息的旧 `seq` 请求会命中服务端的回放分支：
+  消息不会进会话，界面看起来就像"第一句话没反应"。
+- 现场快照的 `status` 直接取 `statusRef`，不要再维护 `runningRef / pausedRef` 之类第二套状态。
 
 ---
 
@@ -240,11 +274,27 @@ idle → running → (paused | waiting | done)
 
 - `dsh-repeat-tool-reminder` → 我们的分级提醒
 - `dsh-fs-observation-policy` → 我们的写入/编辑保护
-- 还没抄的：`dsh-tool-call-timeout-policy`、`dsh-compaction-basic`、
-  `dsh-session-persistence-jsonl`
+- `dsh-tool-call-timeout-policy` → 我们的 `LLM_TIMEOUT` + 重试
+- 还没抄的：`dsh-compaction-basic`、`dsh-session-persistence-jsonl`
 
 解包方法：`app.asar` 前 12 字节后是 JSON 头，按 `entries` 里的 `offset/size`
 切片即可（`/tmp/asar_entries.json` 那套脚本）。
+
+### 7.8 模型调用：超时、重试、截断
+
+- `_post()` 单次调用受 `LLM_TIMEOUT`（默认 180s）约束。
+- `_call()` 对超时 / 429 / 5xx / 连接失败自动重试 `LLM_RETRIES` 次（默认 1）；4xx 不重试。
+- `finish_reason == "length"` 抛 `TruncatedError`；`step()` 会追加一条"拆小文件"的提示再试一次。
+  第二次仍截断才向上报 502，不会把半截 JSON 当合法参数执行。
+- 工具参数解析失败时明确报"不是合法 JSON，多半被截断"，而不是静默变成空动作。
+
+### 7.9 并发与路径安全
+
+- 每个 `Session` 带 `step_lock`；`/api/step` 在锁内做 seq 检查 + 执行 + 落盘。
+  超时后的客户端重试会等前一轮结束后直接回放，不会重复调用模型。
+- `session.get()` 二次检查，避免并发首次加载时两个线程各拿一个 Session 实例。
+- 落盘先写 `.json.tmp` 再 `replace`。
+- 会话 id 必须匹配 `[A-Za-z0-9_-]{1,64}`，因为它会拼进文件路径。
 
 ---
 
@@ -252,22 +302,35 @@ idle → running → (paused | waiting | done)
 
 按优先级：
 
-1. **没有工具调用超时策略**：目前只有 HTTP 超时（180s）。模型偶尔很慢，
-   界面会一直"进行中"。DSH 的做法是给每次工具调用加 deadline，超时返回结构化错误。
-2. **上下文是粗暴截断**：`session.py` 只保留最近 80 条消息。长会话会丢早期信息，
-   也没有摘要压缩。
-3. **单步调用没有流式**：模型生成一个动作期间界面没有中间反馈（只有"进行中"）。
+1. **上下文是粗暴截断**：`session.py` 只保留最近 80 条消息。长会话会丢早期信息，
+   也没有摘要压缩（`dsh-compaction-basic` 还没抄）。
+2. **单步调用没有流式**：模型生成一个动作期间界面没有中间反馈（只有"进行中"）。
+   超时 / 重试已经会报结构化错误，但慢的时候仍然只能等。
+3. **真实模型的任务评测还没有**：`tests/` 覆盖的是协议、循环、守卫和会话；
+   「给一句话，模型是否选对动作、写出能用的代码」需要一组带 API key 的评测集。
 4. **`search` 有时检索质量一般**：query 由模型写，偶尔搜偏；`dedupe` 只按域名限两条。
 5. **自检（check.ts）只覆盖前端项目**：HTML/CSS/JS 的引用、类名、id、括号。
    Python/Node 脚本没有针对性的检查。
-6. **没有端到端测试**：验证目前靠脚本 + CDP 手测（见下一节）。
-7. **`App.tsx` 1500 行**：循环、布局、时间线都在一个文件里，还没拆。
+6. **`App.tsx` 1600 行**：循环、布局、时间线、历史都在一个文件里，还没拆。
+7. **历史只在当前浏览器**：首页「最近」存在 localStorage；服务端只有按 id 的会话。
+   部署到公网、换设备 / 换浏览器就看历史，需要补服务端会话列表 + 鉴权。
+8. **前端没有单元测试**：目前靠 `pnpm build` + headless Chrome 点测；拆 `App.tsx` 时再引 Vitest。
 
 ---
 
 ## 9. 怎么验证（重要，别用错方法）
 
-### 9.1 后端单轮验证
+### 9.1 pytest：默认先跑这个
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+全部用脚本化的假模型（`tests/helpers.py::scripted`），不联网、不花钱。
+覆盖协议、fs 保护、幂等/回放、会话恢复、并发锁、模型重试/截断、完整一轮流程。
+新增工具或改 `agent.step` 分支时，先在这里加一条断言。
+
+### 9.2 真实接口单轮验证（会花 API 调用）
 
 ```bash
 curl -s -X POST localhost:8790/api/session \
@@ -280,7 +343,7 @@ curl -s -X POST localhost:8790/api/step \
 # 之后 seq 递增继续调用，直到 stop=true
 ```
 
-### 9.2 浏览器验证：**不要用 `--virtual-time-budget` 判断"是否完成"**
+### 9.3 浏览器验证：**不要用 `--virtual-time-budget` 判断"是否完成"**
 
 虚拟时钟不会等真实网络，截图经常抓在"请求还在飞"的瞬间，看起来像卡住。
 可靠做法是用 CDP（Chrome DevTools Protocol）连上页面，等真实时间再取状态：
@@ -297,37 +360,44 @@ curl -s -X POST localhost:8790/api/step \
 **Chrome 的 `--user-data-dir` 一律放 `/tmp`**，并在结束时删掉。
 之前写死在项目根目录，攒了 14 个 `.chrome*` 目录共 77MB。
 
-### 9.3 出问题先看哪里
+### 9.4 出问题先看哪里
 
 - 前端：右上角「日志」按钮（或 `?trace=1`），记录每次 send / 事件 / 状态迁移
-- 后端：`logs/trace.jsonl`（每行一个 JSON 事件）和 uvicorn stdout
-- 会话现场：`var/sessions/<id>.json`（能直接看到 messages / files / last_event）
+- 后端：uvicorn stdout（目前没有单独的 trace 文件）
+- 会话现场：`var/sessions/<id>.json`（能直接看到 messages / files / last_event / last_stop）
+- 历史续做：点开旧项目后，前端日志应出现 `history.sync · seq=N`；
+  没有这条就是没同步成功，带消息的请求会被回放吞掉
 
 ---
 
 ## 10. 改这个项目的约定
 
-1. **不要整体重写 `App.tsx`**。1500 行，一次全量重写会丢细节（历史上丢过一次工作区）。
+1. **不要整体重写 `App.tsx`**。1600 行，一次全量重写会丢细节（历史上丢过一次工作区）。
    用精确替换，改完 `pnpm build`（会先跑 tsc）。
 2. **加工具 = 改三处**：`tools.py` 加 schema、`actions.py` 加校验、`agent.py` 加执行分支。
-   缺一处就会静默失败。
+   缺一处就会静默失败；再补一条 `tests/test_agent.py`。
 3. **不要在 prompt 里写死具体场景**（比如"新闻怎么回"）。写**方法**，
    让模型自己套用。之前写死过，换个领域就不灵。
 4. **不要用 setTimeout 驱动循环**，只走 `pump()`。
 5. **不要偷偷加用户没要的功能**（"插话排队"就是被要求删掉的）。
 6. 中文界面、中文注释；文案避免"您好，我是您的助手"这种腔调。
+7. **状态只有一个源**：循环状态只用 `statusRef`；不要再加 `runningRef` / `pausedRef` 第二套。
+8. **改 `/api/session` 或 `/api/step` 的响应**，同步改 `App.tsx` 的恢复/历史逻辑和相应测试。
+9. 提交前至少跑 `pytest -q` 和 `cd web && pnpm build`。
 
 ---
 
 ## 11. 下一步建议（按价值排序）
 
-1. **工具超时 + 重试策略**（照 `dsh-tool-call-timeout-policy` / `dsh-llm-retry`）：
-   长会话最容易在这里翻车。
-2. **上下文压缩**（照 `dsh-compaction-basic`）：先做"工具结果裁剪 + 早期摘要"。
-3. **拆 `App.tsx`**：把时间线、提问卡、恢复卡拆成组件，循环单独一个 hook。
-4. **端到端测试脚本**：把 9.1 的流程写进 `scripts/e2e.py`，覆盖
-   建文件 / 编辑 / 提问 / 搜索 / 拒绝 / 恢复 六条路径。
-5. **部署形态**（如果要给别人看）：纯静态前端 + 服务端会话，注意 API key 不能进前端。
+1. **上下文压缩**（照 `dsh-compaction-basic`）：先做"工具结果裁剪 + 早期摘要"，
+   现在只是粗暴保留最近 80 条。
+2. **真实模型评测集**：固定 6～10 个任务（建文件 / 编辑 / 提问 / 搜索 / 拒绝 / 历史续做），
+   断言期望动作、步数、最终文件；这才能量化"改了 prompt 有没有变差"。
+3. **拆 `App.tsx` + 前端测试**：时间线、提问卡、恢复卡拆组件，循环单独一个 hook；
+   然后引 Vitest 测 `check.ts` / `player.ts` 这类纯逻辑。
+4. **公网部署形态**：服务端会话列表 + 鉴权 / 限流，API key 绝不能进前端；
+   现在的「最近」只在单浏览器 localStorage，换设备就看不到。
+5. **流式输出**：单步调用期间目前只有"进行中"，流式能让过程更可看。
 
 ---
 
@@ -336,4 +406,4 @@ curl -s -X POST localhost:8790/api/step \
 > 这个项目的价值不在"能写代码"，在**每一步都看得见、停得住、能接着做**。
 > 任何让过程变黑箱、或者让循环出现第二个驱动力的改动，都是在拆它。
 
-有问题先看 `logs/trace.jsonl` 和 `var/sessions/`，比读代码快。
+有问题先看前端「日志」、uvicorn stdout 和 `var/sessions/`，比读代码快。
