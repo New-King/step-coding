@@ -916,6 +916,9 @@ export default function App() {
       ? snap.active
       : playerRef.current?.active ?? fileList[0]?.path ?? "");
 
+  /** 循环正在跑时的目标文件；用户点别处时它仍然指向这里。 */
+  const writingPath = running && snap.total > 0 && !snap.finished ? snap.active : null;
+
   const code = activeFile ? snap.buffers[activeFile] ?? filesRef.current[activeFile] ?? "" : "";
   const langName = fileList.find((f) => f.path === activeFile)?.lang ?? "javascript";
 
@@ -979,6 +982,11 @@ export default function App() {
     }
   };
 
+  /** 点步骤框：回到播放器正在写的那个文件。 */
+  const followWriting = () => {
+    if (snap.active) setPeek(null);
+  };
+
   const exportZip = () => {
     const files = filesRef.current;
     const entries = Object.keys(files)
@@ -1037,18 +1045,39 @@ export default function App() {
 
             {resumable && (
               <div className="resume-card">
-                <div className="resume-title">上次没做完</div>
-                <div className="resume-text">
-                  {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
-                    ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
-                    : "一个项目"}
-                  <span className="resume-meta">
-                    {resumable.items.length} 步 · {timeAgo(resumable.savedAt)}
-                  </span>
+                <div className="resume-body">
+                  <div className="resume-title">上次没做完</div>
+                  <div className="resume-text">
+                    {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
+                      ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
+                      : "一个项目"}
+                    <span className="resume-meta">
+                      {resumable.items.length} 步 · {timeAgo(resumable.savedAt)}
+                    </span>
+                  </div>
                 </div>
                 <div className="resume-actions">
-                  <button className="primary" onClick={resume}>接着做</button>
-                  <button className="ghost" onClick={clearAll}>不要了</button>
+                  <button
+                    className="resume-icon"
+                    onClick={resume}
+                    title="接着做"
+                    aria-label="接着做"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+                      <path d="M13.5 6.5l4 4" />
+                    </svg>
+                  </button>
+                  <button
+                    className="resume-icon danger"
+                    onClick={clearAll}
+                    title="不要了"
+                    aria-label="不要了"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             )}
@@ -1144,7 +1173,6 @@ export default function App() {
         </label>
         <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
         <button className="ghost" onClick={replay}>重播</button>
-        <button className="ghost" onClick={copy}>{copied ? "已复制" : "复制"}</button>
         <button className="primary" onClick={exportZip}>导出代码</button>
         <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
           日志{logs.length > 0 ? ` ${logs.length}` : ""}
@@ -1162,11 +1190,16 @@ export default function App() {
             fileList.map((f) => (
               <button
                 key={f.path}
-                className={`file ${activeFile === f.path ? "on" : ""}`}
+                className={`file ${activeFile === f.path ? "on" : ""} ${
+                  writingPath === f.path ? "coding" : ""
+                }`}
                 title={f.path}
                 onClick={() => setPeek(f.path)}
               >
-                {f.path}
+                <span className="file-name">{f.path}</span>
+                {writingPath === f.path && (
+                  <span className="file-coding" aria-label="正在写" title="正在写" />
+                )}
               </button>
             ))
           ) : (
@@ -1180,6 +1213,24 @@ export default function App() {
             <div className="code-head">
               <span className="code-path">{activeFile || "等待第一步"}</span>
               <span className="code-lines">{code ? code.split("\n").length - 1 : 0} 行</span>
+              <button
+                className="code-copy"
+                onClick={() => void copy()}
+                title={copied ? "已复制" : "复制当前文件"}
+                aria-label="复制当前文件"
+                disabled={!code}
+              >
+                {copied ? (
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <path d="M5 12.5l4.5 4.5L19 7.5" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <rect x="8" y="8" width="11" height="11" rx="2" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                )}
+              </button>
             </div>
             <div
               className="code"
@@ -1192,7 +1243,9 @@ export default function App() {
               {code ? (
                 <>
                   <pre dangerouslySetInnerHTML={{ __html: highlighted }} />
-                  <span className={`caret ${paused || snap.finished ? "idle" : ""}`} />
+                  {snap.typing && !paused && activeFile === snap.active && (
+                    <span className="caret" />
+                  )}
                 </>
               ) : (
                 <div className="code-empty stage-waiting">
@@ -1202,7 +1255,21 @@ export default function App() {
               )}
             </div>
 
-            <div className={`step-toast ${running && snap.total > 0 && !snap.finished ? "in" : ""} ${ghostLabel ? "changing" : ""}`}>
+            <div
+              className={`step-toast ${running && snap.total > 0 && !snap.finished ? "in" : ""} ${
+                ghostLabel ? "changing" : ""
+              } ${snap.active && activeFile !== snap.active ? "can-follow" : ""}`}
+              role="button"
+              tabIndex={running && snap.total > 0 && !snap.finished ? 0 : -1}
+              title={snap.active ? "回到正在写的文件" : ""}
+              onClick={followWriting}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  followWriting();
+                }
+              }}
+            >
               <span className="st-tile">
                 <svg viewBox="0 0 24 24" aria-hidden>
                   <path d="M4 12h13M11 6l6 6-6 6" />
