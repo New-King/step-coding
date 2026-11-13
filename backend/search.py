@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -145,7 +146,7 @@ def dedupe(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         url = item.get("url", "")
         if not url or url in seen_url:
             continue
-        host = url.split("/")[2] if url.startswith("http") else url
+        host = urlsplit(url).hostname or url
         if seen_host.get(host, 0) >= 2:
             continue
         seen_host[host] = seen_host.get(host, 0) + 1
