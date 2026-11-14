@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import css from "highlight.js/lib/languages/css";
@@ -195,6 +195,8 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("trace") === "1"
   );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
+  const [processOpen, setProcessOpen] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
 
   const messagesRef = useRef<ChatMessage[]>([]);
   const filesRef = useRef<Record<string, string>>({});
@@ -214,6 +216,7 @@ export default function App() {
   const lastMsRef = useRef(0);
   const pendingCardRef = useRef<number | null>(null);
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
+  const runStartRef = useRef(0);
   const stepLabelRef = useRef("");
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -252,6 +255,12 @@ export default function App() {
     logsRef.current = [...logsRef.current.slice(-199), entry];
     setLogs(logsRef.current);
     console.info(`[step-coding] ${tag} · ${text}`);
+  };
+
+  /** 新一轮开始时把计时归零；状态行会一直走到这一轮结束。 */
+  const resetRunClock = () => {
+    runStartRef.current = Date.now();
+    setElapsed(0);
   };
 
   const applyChanges = (changed: Record<string, string | null>) => {
@@ -323,6 +332,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 运行计时：状态行需要一直走
+  useEffect(() => {
+    if (!running || !runStartRef.current) return;
+    const update = () => setElapsed(Math.floor((Date.now() - runStartRef.current) / 1000));
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
+
+  // 有提问或报错时必须展开，不然用户看不到问题
+  useEffect(() => {
+    if (pending || error) setProcessOpen(true);
+  }, [pending, error]);
+
   /* ------------------------------------------------------------ 循环 */
 
   const start = async (task: string) => {
@@ -360,6 +383,7 @@ export default function App() {
     setAskAnswers([]);
     setAnswer("");
     answeringRef.current = false;
+    resetRunClock();
     statusRef.current = "running";
     setRunning(true);
     push({ action: "user", text: value } as Event);
@@ -682,6 +706,7 @@ export default function App() {
         ? text
         : pending.map((q, i) => `${q.question} → ${next[i]}`).join("\n");
 
+    resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = payload;
     setPending(null);
@@ -717,6 +742,7 @@ export default function App() {
 
     playerRef.current!.paused = false;
     setPaused(false);
+    resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = value;
     setRunning(true);
@@ -732,6 +758,8 @@ export default function App() {
 
     setStarted(true);
     setResumable(null);
+    runStartRef.current = 0;
+    setElapsed(0);
     sessionIdRef.current = saved.id;
     itemsRef.current = saved.items;
     setItems(saved.items);
@@ -777,6 +805,7 @@ export default function App() {
     setPending(null);
 
     if (saved.status === "running" || saved.status === "paused") {
+      resetRunClock();
       setRunning(true);
       statusRef.current = "running";
       note("resume", "接着跑");
@@ -856,6 +885,8 @@ export default function App() {
     seqRef.current = 0;
     sessionIdRef.current = "";
     statusRef.current = "idle";
+    runStartRef.current = 0;
+    setElapsed(0);
   };
 
   const togglePause = () => {
@@ -925,6 +956,8 @@ export default function App() {
     setAnswer("");
     setRunning(false);
     statusRef.current = "done";
+    runStartRef.current = 0;
+    setElapsed(0);
     sessionIdRef.current = item.id;
     const items = item.items.map((it) => (it.pending ? { ...it, pending: false } : it));
     itemsRef.current = items;
@@ -985,6 +1018,35 @@ export default function App() {
     }));
   };
 
+  /** 从「最近」里删掉一个项目：本地记录 + 服务端会话一起清掉。 */
+  const removeHistory = async (item: HistoryItem) => {
+    setHistory((prev) => {
+      const next = prev.filter((x) => x.id !== item.id);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下就算了 */
+      }
+      return next;
+    });
+
+    if (resumable?.id === item.id) {
+      setResumable(null);
+      try {
+        localStorage.removeItem(SESSION_KEY);
+      } catch {
+        /* 忽略 */
+      }
+    }
+
+    note("history.remove", item.id);
+    try {
+      await request(`/api/session/${encodeURIComponent(item.id)}`, undefined, "DELETE");
+    } catch {
+      /* 服务端删不掉不影响本地记录 */
+    }
+  };
+
   /* ------------------------------------------------------------ 展示 */
 
   const firstUserItem = itemsRef.current.find(
@@ -994,6 +1056,9 @@ export default function App() {
     firstUserItem && firstUserItem.ev.action === "user"
       ? titleOf(firstUserItem.ev.text, 22)
       : "新项目";
+
+  const liveLabel = liveStatusOf(items, pending, askIndex, running, paused);
+  const runTime = runStartRef.current ? elapsedText(elapsed) : "";
 
   const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
   const activeFile =
@@ -1151,10 +1216,7 @@ export default function App() {
                     title="接着做"
                     aria-label="接着做"
                   >
-                    <svg viewBox="0 0 24 24" aria-hidden>
-                      <path d="M4 20h4L19 9l-4-4L4 16v4z" />
-                      <path d="M13.5 6.5l4 4" />
-                    </svg>
+                    <PencilIcon />
                   </button>
                   <button
                     className="resume-icon danger"
@@ -1162,9 +1224,7 @@ export default function App() {
                     title="不要了"
                     aria-label="不要了"
                   >
-                    <svg viewBox="0 0 24 24" aria-hidden>
-                      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
-                    </svg>
+                    <TrashIcon />
                   </button>
                 </div>
               </div>
@@ -1211,18 +1271,40 @@ export default function App() {
               </button>
             </div>
             <div className="history-list">
-              {history.map((item, i) => (
-                <button
-                  key={i}
-                  className="history-item"
-                  onClick={() => void openHistory(item)}
-                >
-                  <span className="hi-title">{item.title || "最近一次"}</span>
-                  <span className="hi-meta">
-                    {item.updatedAt ? `${timeAgo(item.updatedAt)} · ` : ""}
-                    {Object.keys(item.files).length} 个文件
-                  </span>
-                </button>
+              {history.map((item) => (
+                <div key={item.id} className="history-item">
+                  <button className="hi-main" onClick={() => void openHistory(item)}>
+                    <span className="hi-title">{item.title || "最近一次"}</span>
+                    <span className="hi-meta">
+                      {item.updatedAt ? `${timeAgo(item.updatedAt)} · ` : ""}
+                      {Object.keys(item.files).length} 个文件
+                    </span>
+                  </button>
+                  <div className="hi-actions">
+                    <button
+                      className="hi-icon"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openHistory(item);
+                      }}
+                      title="继续修改"
+                      aria-label="继续修改"
+                    >
+                      <PencilIcon />
+                    </button>
+                    <button
+                      className="hi-icon danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void removeHistory(item);
+                      }}
+                      title="删除"
+                      aria-label="删除"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           </section>
@@ -1239,8 +1321,8 @@ export default function App() {
         <div className="brand">
           <span className="logo" />
           <span className="name">{projectTitle}</span>
-          <span className={`status ${running ? "busy" : pending ? "wait" : "done"}`}>
-            {running ? "进行中" : pending ? "等你回答" : "已完成"}
+          <span className={`status ${running ? "busy" : paused ? "paused" : pending ? "wait" : "done"}`}>
+            {running ? "进行中" : paused ? "已暂停" : pending ? "等你回答" : "已完成"}
           </span>
         </div>
         <div className="spacer" />
@@ -1383,9 +1465,23 @@ export default function App() {
         </section>
 
         <aside className="chat">
-          <div className="chat-head">过程</div>
+          <button
+            className={`run-status ${running ? "on" : ""} ${processOpen ? "open" : ""}`}
+            onClick={() => setProcessOpen((v) => !v)}
+            aria-expanded={processOpen}
+            title={processOpen ? "收起过程" : "展开过程"}
+          >
+            <span className="run-dots" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className={`run-label ${running ? "live" : ""}`}>{liveLabel}</span>
+            {runTime && <span className="run-time">{runTime}</span>}
+            <span className="run-chevron" aria-hidden />
+          </button>
           <div
-            className="chat-log"
+            className={`chat-log ${processOpen ? "" : "collapsed"}`}
             ref={logRef}
             onScroll={() => {
               const el = logRef.current;
@@ -1461,8 +1557,10 @@ export default function App() {
               </div>
             )}
 
-            {running && !pending && <div className="bubble assistant typing">…</div>}
-          </div>
+            </div>
+          {!processOpen && (
+            <div className="chat-collapsed-tip">过程已收起 · 点上方展开</div>
+          )}
           <div className="chat-foot">
             {!running && !pending && items.length > 0 && (
               <div className="idle-hint">轮到你了 · 接着说一句就继续</div>
@@ -1579,12 +1677,105 @@ function describeEvent(ev: Event): string {
   }
 }
 
+function elapsedText(sec: number) {
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/** 过程栏顶部那行：当前这一步在干什么，文字跟着模型返回的动作走。 */
+function liveStatusOf(
+  items: Item[],
+  pending: { question: string }[] | null,
+  askIndex: number,
+  running: boolean,
+  paused: boolean
+): string {
+  if (pending?.length) {
+    return `提问 · ${pending[askIndex]?.question || "等你回答"}`;
+  }
+
+  let live: Item | undefined = items[items.length - 1];
+  if (!running && live) {
+    // 结束后的自检 plan 不是"当前动作"，跳过它找最后一条收尾消息
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      if (items[i].kind === "user") break;
+      if (items[i].kind === "plan") continue;
+      live = items[i];
+      break;
+    }
+  }
+
+  let label = "准备开始";
+  if (live) {
+    const ev = live.ev;
+    switch (ev.action) {
+      case "think":
+        label = ev.text;
+        break;
+      case "look":
+        label = `查看 ${ev.path || "项目根目录"}`;
+        break;
+      case "plan":
+        label = `计划 · ${ev.steps.length} 步`;
+        break;
+      case "search":
+        label = ev.results
+          ? `搜索「${ev.query}」· ${ev.results.length} 条`
+          : `搜索「${ev.query}」`;
+        break;
+      case "write":
+        label = `写 ${ev.path} · ${ev.label}`;
+        break;
+      case "edit":
+        label = `改 ${ev.path} · ${ev.label}`;
+        break;
+      case "delete":
+        label = `删除 ${ev.path}`;
+        break;
+      case "ask":
+        label = `提问 · ${ev.questions[0]?.question ?? ""}`;
+        break;
+      case "say":
+      case "finish":
+      case "decline":
+        label = live.pending ? "正在收尾…" : ev.text || "完成";
+        break;
+      case "error":
+        label = `出错 · ${ev.text}`;
+        break;
+      case "user":
+        label = `处理「${titleOf(ev.text, 36)}」`;
+        break;
+    }
+  }
+
+  return paused ? `已暂停 · ${label}` : label;
+}
+
 function hostOf(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
   }
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+      <path d="M13.5 6.5l4 4" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+    </svg>
+  );
 }
 
 function titleOf(text: string, max = 24) {
@@ -1615,6 +1806,7 @@ function TimelineItem({
   live?: boolean;
   onIdea?: (text: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const picked = item.picked;
   const ev = item.ev;
 
@@ -1626,33 +1818,139 @@ function TimelineItem({
     );
   }
 
-  if (ev.action === "think") {
-    return <div className="tl think">{ev.text}</div>;
-  }
+  // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
+  if (ev.action === "ask" && live) return null;
 
-  if (ev.action === "look") {
-    return <div className="tl look">查看 {ev.path || "项目根目录"}</div>;
-  }
+  // finish 还挂着"正在收尾"时，顶部状态行已经在说，别在列表里再重复一条
+  if (ev.action === "finish" && item.pending) return null;
 
-  if (ev.action === "search") {
-    const done = Boolean(ev.results);
-    return (
-      <div className="tl search">
-        <div className="ws-head">
-          <span className={`ws-ring ${done ? "done" : ""}`} />
-          <span className="ws-query">{ev.query}</span>
-          {done && <span className="ws-count">{ev.results!.length} 条</span>}
+  const kind = kindOf(ev.action);
+  const summary = summaryOf(ev, item.pending);
+  const detail = detailOf(ev, item.pending, picked, onIdea);
+  const expandable = detail !== null;
+
+  return (
+    <div className={`tl ${ev.action} collapsible ${open ? "open" : ""}`}>
+      <button
+        className={`tl-row ${expandable ? "" : "static"}`}
+        onClick={() => {
+          if (expandable) setOpen((v) => !v);
+        }}
+        aria-expanded={expandable ? open : undefined}
+        tabIndex={expandable ? 0 : -1}
+      >
+        {kind && <span className="tl-kind">{kind}</span>}
+        <span className="tl-summary">{summary}</span>
+        {expandable && <span className={`tl-chevron ${open ? "open" : ""}`} aria-hidden />}
+      </button>
+      {expandable && open && <div className="tl-detail">{detail}</div>}
+    </div>
+  );
+}
+
+function kindOf(action: Event["action"]): string {
+  const map: Record<string, string> = {
+    think: "思考",
+    look: "查看",
+    search: "搜索",
+    plan: "计划",
+    ask: "提问",
+    write: "",
+    edit: "",
+    delete: "",
+    say: "回话",
+    decline: "拒绝",
+    finish: "完成",
+    error: "出错",
+    user: "你",
+  };
+  return map[action] ?? "";
+}
+
+function summaryOf(ev: Event, pending?: boolean): ReactNode {
+  switch (ev.action) {
+    case "think":
+      return <span className="tl-summary-text">{ev.text || "…"}</span>;
+    case "look":
+      return <span className="tl-summary-text">{ev.path || "项目根目录"}</span>;
+    case "search":
+      return (
+        <>
+          {!ev.results && <span className="ws-ring" />}
+          <span className="tl-summary-text">
+            {ev.query}
+            {ev.results ? ` · ${ev.results.length} 条` : ""}
+          </span>
+        </>
+      );
+    case "plan":
+      return <span className="tl-summary-text">{ev.steps.length} 步</span>;
+    case "ask":
+      return <span className="tl-summary-text">{ev.questions[0]?.question || "提问"}</span>;
+    case "write":
+    case "edit":
+    case "delete":
+      return (
+        <>
+          <span
+            className={`op-tag ${ev.action === "write" ? "new" : ev.action === "edit" ? "edit" : "del"}`}
+          >
+            {ev.action === "write" ? "新建" : ev.action === "edit" ? "修改" : "删除"}
+          </span>
+          <span className="op-path">{ev.path}</span>
+          <span className="op-label">{ev.label}</span>
+        </>
+      );
+    case "say":
+    case "decline":
+    case "finish":
+      return (
+        <span className="tl-summary-text">
+          {pending ? "正在收尾…" : ev.text || "完成"}
+        </span>
+      );
+    case "error":
+      return <span className="tl-summary-text">{ev.text}</span>;
+    case "user":
+      return <span className="tl-summary-text">{ev.text}</span>;
+    default:
+      return null;
+  }
+}
+
+function detailOf(
+  ev: Event,
+  pending: boolean | undefined,
+  picked: string | undefined,
+  onIdea?: (text: string) => void
+): ReactNode | null {
+  switch (ev.action) {
+    case "think":
+    case "say":
+    case "error":
+      return ev.text ? <div className="tl-text">{ev.text}</div> : null;
+
+    case "plan":
+      return (
+        <div className="tl-plan-body">
+          {ev.steps.map((s, i) => (
+            <div key={i} className="plan-step">
+              <span className="plan-i">{i + 1}</span>
+              {s}
+            </div>
+          ))}
         </div>
+      );
 
-        {!done && <div className="ws-waiting">正在搜…</div>}
-
-        {done && ev.error && <div className="ws-waiting">搜索失败：{ev.error}</div>}
-
-        {done &&
-          !ev.error &&
-          (ev.results!.length > 0 ? (
+    case "search":
+      if (!ev.results) return null;
+      return (
+        <div className="tl-search-body">
+          {ev.error ? (
+            <div className="ws-waiting">搜索失败：{ev.error}</div>
+          ) : ev.results.length > 0 ? (
             <div className="ws-grid">
-              {ev.results!.slice(0, 4).map((r, i) => (
+              {ev.results.slice(0, 4).map((r, i) => (
                 <a
                   key={i}
                   className="ws-card"
@@ -1669,110 +1967,92 @@ function TimelineItem({
             </div>
           ) : (
             <div className="ws-waiting">没搜到结果</div>
+          )}
+        </div>
+      );
+
+    case "ask":
+      return (
+        <div className="ask-done">
+          {ev.questions.map((q, i) => (
+            <div key={i} className="ask-done-q">
+              {q.question}
+              {q.options.length > 0 && (
+                <div className="ask-done-opts">{q.options.join(" · ")}</div>
+              )}
+            </div>
           ))}
-      </div>
-    );
-  }
+        </div>
+      );
 
-  if (ev.action === "plan") {
-    return (
-      <div className="tl plan">
-        {ev.steps.map((s, i) => (
-          <div key={i} className="plan-step">
-            <span className="plan-i">{i + 1}</span>
-            {s}
-          </div>
-        ))}
-      </div>
-    );
-  }
+    case "write":
+      return ev.code.trim() ? <CodeDetail path={ev.path} code={ev.code} /> : null;
 
-  if (ev.action === "ask") {
-    if (live) return null;
-    return (
-      <div className="tl ask-done">
-        {ev.questions.map((q, i) => (
-          <div key={i} className="ask-done-q">
-            {q.question}
-            {q.options.length > 0 && <div className="ask-done-opts">{q.options.join(" · ")}</div>}
-          </div>
-        ))}
-      </div>
-    );
-  }
+    case "edit":
+      return (
+        <div className="tl-diff">
+          <pre className="tl-diff-del">{ev.find}</pre>
+          <pre className="tl-diff-add">{ev.replace}</pre>
+        </div>
+      );
 
-  if (ev.action === "write") {
-    return (
-      <div className="tl file-op">
-        <span className="op-tag new">新建</span>
-        <span className="op-path">{ev.path}</span>
-        <span className="op-label">{ev.label}</span>
-      </div>
-    );
-  }
+    case "delete":
+    case "look":
+      return null;
 
-  if (ev.action === "edit") {
-    return (
-      <div className="tl file-op">
-        <span className="op-tag edit">修改</span>
-        <span className="op-path">{ev.path}</span>
-        <span className="op-label">{ev.label}</span>
-      </div>
-    );
-  }
+    case "finish":
+      return !pending && ev.text ? <div className="tl-text">{ev.text}</div> : null;
 
-  if (ev.action === "delete") {
-    return (
-      <div className="tl file-op">
-        <span className="op-tag del">删除</span>
-        <span className="op-path">{ev.path}</span>
-        <span className="op-label">{ev.label}</span>
-      </div>
-    );
-  }
+    case "decline":
+      return (
+        <>
+          <div className="tl-text">{ev.text}</div>
+          {ev.suggestions.length > 0 && (
+            <div className="decline-ideas">
+              {picked
+                ? ev.suggestions.map((idea) => (
+                    <span
+                      key={idea}
+                      className={`decline-idea-static ${idea === picked ? "chosen" : ""}`}
+                    >
+                      {idea}
+                    </span>
+                  ))
+                : ev.suggestions.map((idea) => (
+                    <button
+                      key={idea}
+                      className="decline-idea"
+                      onClick={() => onIdea?.(idea)}
+                      title="点一下就按这个开工"
+                    >
+                      {idea}
+                    </button>
+                  ))}
+            </div>
+          )}
+        </>
+      );
 
-  if (ev.action === "say") {
-    return <div className="tl say">{ev.text}</div>;
+    case "user":
+      return null;
+    default:
+      return null;
   }
+}
 
-  if (ev.action === "decline") {
-    return (
-      <div className="tl decline">
-        <div>{ev.text}</div>
-        {ev.suggestions.length > 0 && (
-          <div className="decline-ideas">
-            {picked
-              ? ev.suggestions.map((idea) => (
-                  <span
-                    key={idea}
-                    className={`decline-idea-static ${idea === picked ? "chosen" : ""}`}
-                  >
-                    {idea}
-                  </span>
-                ))
-              : ev.suggestions.map((idea) => (
-                  <button
-                    key={idea}
-                    className="decline-idea"
-                    onClick={() => onIdea?.(idea)}
-                    title="点一下就按这个开工"
-                  >
-                    {idea}
-                  </button>
-                ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (ev.action === "error") {
-    return <div className="tl err">{ev.text}</div>;
-  }
+function CodeDetail({ path, code }: { path: string; code: string }) {
+  const html = useMemo(() => {
+    try {
+      return hljs.highlight(code, { language: langOf(path) }).value;
+    } catch {
+      return "";
+    }
+  }, [path, code]);
 
   return (
-    <div className={`tl finish ${item.pending ? "pending" : ""}`}>
-      {item.pending ? "正在收尾…" : ev.text || "完成"}
+    <div className="tl-code-wrap">
+      <div className="tl-code-meta">{code.split("\n").length - 1} 行</div>
+      {html ? <pre className="tl-code" dangerouslySetInnerHTML={{ __html: html }} /> : <pre className="tl-code">{code}</pre>}
     </div>
   );
 }
