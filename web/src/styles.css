@@ -880,12 +880,12 @@ button {
   place-items: center;
 }
 
-/* 9 个小方块：光点沿外圈顺时针绕圈，一圈 2.24s（每格 0.28s） */
+/* 9 个小方块：光点沿外圈顺时针绕圈，一圈 1.12s（每格 0.14s），不能更慢，慢了像卡住 */
 .grid-loader {
   --g-dot: 4px;
   --g-gap: 3px;
-  --g-step: 0.28s;
-  --g-lap: 2.24s;
+  --g-step: 0.14s;
+  --g-lap: 1.12s;
   display: grid;
   grid-template-columns: repeat(3, var(--g-dot));
   grid-template-rows: repeat(3, var(--g-dot));
@@ -910,8 +910,9 @@ button {
   animation-delay: calc(var(--i) * var(--g-step) - var(--g-lap));
 }
 
+/* 中间那格不跟着转，自己慢慢呼吸，别和绕圈一个节奏 */
 .grid-loader i.core {
-  animation: grid-core var(--g-lap) ease-in-out infinite;
+  animation: grid-core 2.6s ease-in-out infinite;
 }
 
 /* 亮起后沿着走过来的方向慢慢退：拖尾铺满半圈，看着才像一条光在绕，而不是一格一格闪 */
