@@ -966,14 +966,56 @@ button {
   place-items: center;
 }
 
-.st-tile svg {
-  width: 17px;
-  height: 17px;
+.st-loader {
+  width: 19px;
+  height: 19px;
+  overflow: visible;
+}
+
+.st-track {
   fill: none;
-  stroke: currentColor;
-  stroke-width: 2.4;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1.2;
+}
+
+.st-orbit {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  animation: st-orbit 2.2s linear infinite;
+}
+
+.st-arc {
+  fill: none;
+  stroke: url(#st-loader-shine);
+  stroke-width: 2.2;
   stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-dasharray: 30 24;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.45));
+}
+
+.st-core {
+  fill: #fff;
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  animation: st-core 1.25s ease-in-out infinite;
+}
+
+@keyframes st-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes st-core {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
 }
 
 .step-toast.changing .st-tile {
@@ -995,6 +1037,27 @@ button {
   letter-spacing: -0.15px;
   white-space: nowrap;
   animation: st-in 0.5s cubic-bezier(0.22, 1.25, 0.36, 1) both;
+}
+
+/* 运行中：文字上扫过一道高光，和左边 loading 一起动 */
+.step-toast.in .st-text {
+  background-image: linear-gradient(100deg, var(--ink) 35%, #a8a8af 50%, var(--ink) 65%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: st-in 0.5s cubic-bezier(0.22, 1.25, 0.36, 1) both,
+    st-shimmer 1.5s linear infinite;
+}
+
+@keyframes st-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .st-ghost {
@@ -1045,6 +1108,21 @@ button {
   0% { transform: scale(1); }
   38% { transform: scale(1.14) rotate(-6deg); }
   100% { transform: scale(1) rotate(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-orbit,
+  .st-core,
+  .file-coding {
+    animation: none;
+  }
+
+  .step-toast.in .st-text {
+    background: none;
+    color: var(--ink);
+    -webkit-text-fill-color: currentColor;
+    animation: st-in 0.5s cubic-bezier(0.22, 1.25, 0.36, 1) both;
+  }
 }
 
 .stage-waiting {
