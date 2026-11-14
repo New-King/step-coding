@@ -1440,21 +1440,12 @@ export default function App() {
                 }
               }}
             >
-              <span className="st-tile">
-                <svg className="st-loader" viewBox="0 0 24 24" aria-hidden>
-                  <defs>
-                    <linearGradient id="st-loader-shine" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0" stopColor="#fff" stopOpacity="0" />
-                      <stop offset="0.55" stopColor="#fff" stopOpacity="0.35" />
-                      <stop offset="1" stopColor="#fff" />
-                    </linearGradient>
-                  </defs>
-                  <circle className="st-track" cx="12" cy="12" r="8.6" />
-                  <g className="st-orbit">
-                    <circle className="st-arc" cx="12" cy="12" r="8.6" />
-                  </g>
-                  <circle className="st-core" cx="12" cy="12" r="1.9" />
-                </svg>
+              <span className="st-tile" aria-hidden>
+                <span className="st-grid">
+                  {Array.from({ length: 9 }, (_, i) => (
+                    <i key={i} className={`d${i}`} />
+                  ))}
+                </span>
               </span>
               <div className="st-stack">
                 {ghostLabel && <span className="st-ghost" key={`g-${ghostLabel}`}>{ghostLabel}</span>}

@@ -1012,7 +1012,7 @@ button {
   pointer-events: auto;
 }
 
-.step-toast.can-follow:hover .st-tile {
+.step-toast.can-follow:hover .st-grid i {
   background: var(--accent-hover);
 }
 
@@ -1020,72 +1020,77 @@ button {
   animation: card-pop 0.52s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* 小方块：每一步都换一次，弹跳一次 */
+/* 9 个小方块：高亮沿边缘走一圈，渐隐渐亮，不转圈 */
 .st-tile {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border-radius: 11px;
-  background: var(--accent);
-  color: #fff;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   display: grid;
   place-items: center;
 }
 
-.st-loader {
-  width: 19px;
-  height: 19px;
-  overflow: visible;
+.st-grid {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 3px;
+  place-content: center;
 }
 
-.st-track {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.18);
-  stroke-width: 1.2;
+.st-grid i {
+  width: 4px;
+  height: 4px;
+  border-radius: 1.2px;
+  background: var(--ink);
+  opacity: 0.12;
+  transform: scale(0.8);
+  animation: st-grid-fade 1.35s ease-in-out infinite;
 }
 
-.st-orbit {
-  transform-box: view-box;
-  transform-origin: 12px 12px;
-  animation: st-orbit 2.2s linear infinite;
-}
+.st-grid .d0 { animation-delay: 0s; }
+.st-grid .d1 { animation-delay: 0.07s; }
+.st-grid .d2 { animation-delay: 0.14s; }
+.st-grid .d3 { animation-delay: 0.21s; }
+.st-grid .d4 { animation-delay: 0.28s; }
+.st-grid .d5 { animation-delay: 0.35s; }
+.st-grid .d6 { animation-delay: 0.42s; }
+.st-grid .d7 { animation-delay: 0.49s; }
+.st-grid .d8 { animation-delay: 0.56s; }
 
-.st-arc {
-  fill: none;
-  stroke: url(#st-loader-shine);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-dasharray: 30 24;
-  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.45));
-}
-
-.st-core {
-  fill: #fff;
-  transform-box: view-box;
-  transform-origin: 12px 12px;
-  animation: st-core 1.25s ease-in-out infinite;
-}
-
-@keyframes st-orbit {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes st-core {
+@keyframes st-grid-fade {
   0%,
   100% {
-    transform: scale(0.72);
-    opacity: 0.55;
+    opacity: 0.1;
+    transform: scale(0.78);
   }
-  50% {
-    transform: scale(1.18);
+  14% {
     opacity: 1;
+    transform: scale(1.05);
+  }
+  34% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  58% {
+    opacity: 0.12;
+    transform: scale(0.8);
   }
 }
 
 .step-toast.changing .st-tile {
-  animation: tile-bump 0.52s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: st-grid-bump 0.52s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes st-grid-bump {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.1);
+  }
 }
 
 .st-stack {
@@ -1170,16 +1175,19 @@ button {
   100% { transform: scale(1); }
 }
 
-@keyframes tile-bump {
-  0% { transform: scale(1); }
-  38% { transform: scale(1.14) rotate(-6deg); }
-  100% { transform: scale(1) rotate(0); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .st-orbit,
-  .st-core,
+  .st-grid i,
   .file-coding {
+    animation: none;
+  }
+
+  .st-grid i {
+    opacity: 0.35;
+    transform: none;
+  }
+
+  .step-toast.changing,
+  .step-toast.changing .st-tile {
     animation: none;
   }
 
