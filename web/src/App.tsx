@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import css from "highlight.js/lib/languages/css";
@@ -76,6 +76,23 @@ type HistoryItem = {
 
 const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 
+/** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再看两秒才收 */
+const TOAST_DONE_HOLD = 2000;
+
+/** 3×3 方格的顺时针外圈（0 是左上角）；正中间那格不参与转圈 */
+const RING_ORDER = [0, 1, 2, 5, 8, 7, 6, 3];
+
+/** 这条时间线是不是正常收尾了：最后一个收尾动作在最后一句用户消息之后。 */
+function projectDone(items: Item[]): boolean {
+  let lastTerminal = -1;
+  let lastUser = -1;
+  items.forEach((item, i) => {
+    if (item.kind === "user") lastUser = i;
+    if (TERMINAL_KINDS.has(item.kind)) lastTerminal = i;
+  });
+  return lastTerminal > lastUser;
+}
+
 /**
  * 这次现场是不是正常收尾了。
  *
@@ -85,14 +102,7 @@ const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 function endedNormally(saved: SavedSession): boolean {
   if (saved.status === "done") return true;
   if (saved.pending?.length) return false;
-
-  let lastTerminal = -1;
-  let lastUser = -1;
-  saved.items.forEach((item, i) => {
-    if (item.kind === "user") lastUser = i;
-    if (TERMINAL_KINDS.has(item.kind)) lastTerminal = i;
-  });
-  return lastTerminal > lastUser;
+  return projectDone(saved.items);
 }
 
 const EMPTY: Snapshot = {
@@ -197,6 +207,8 @@ export default function App() {
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
   const [processOpen, setProcessOpen] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+  /** 步骤浮层收尾：方块停转、画个勾，停 2 秒再收起 */
+  const [toastDone, setToastDone] = useState(false);
 
   const messagesRef = useRef<ChatMessage[]>([]);
   const filesRef = useRef<Record<string, string>>({});
@@ -218,6 +230,8 @@ export default function App() {
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runStartRef = useRef(0);
   const stepLabelRef = useRef("");
+  const toastTimerRef = useRef<number | null>(null);
+  const stepActiveRef = useRef(false);
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -328,7 +342,10 @@ export default function App() {
       window.history.replaceState(null, "", window.location.pathname + window.location.hash);
     }
 
-    return () => p.stop();
+    return () => {
+      p.stop();
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -348,6 +365,28 @@ export default function App() {
 
   /* ------------------------------------------------------------ 循环 */
 
+  /**
+   * 收尾时把步骤浮层从「转圈」切成「打勾」，勾停下来再收起。
+   *
+   * 判据用 ref 不用 state：收尾回调是在发起循环那一帧的闭包里跑的，
+   * 那里读到的 snap 还是空的，按它判断会永远不亮勾。
+   */
+  const toastSettle = () => {
+    if (!stepActiveRef.current) return;
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToastDone(true);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToastDone(false);
+    }, TOAST_DONE_HOLD);
+  };
+
+  const toastReset = () => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setToastDone(false);
+  };
+
   const start = async (task: string) => {
     const value = task.trim();
     if (!value) return;
@@ -361,6 +400,7 @@ export default function App() {
     setStarted(true);
     setError(null);
     setPending(null);
+    toastReset();
 
     if (new URLSearchParams(window.location.search).has("q")) {
       window.history.replaceState(null, "", window.location.pathname + window.location.hash);
@@ -621,6 +661,7 @@ export default function App() {
   const finish = (text: string) => {
     statusRef.current = "done";
     setRunning(false);
+    toastSettle();
 
     const files = filesRef.current;
     if (Object.keys(files).length === 0) {
@@ -712,6 +753,7 @@ export default function App() {
     setPending(null);
     setAskAnswers([]);
     setAskIndex(0);
+    toastReset();
     setRunning(true);
     push({ action: "user", text: payload } as Event);
     saveSession();
@@ -745,6 +787,7 @@ export default function App() {
     resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = value;
+    toastReset();
     setRunning(true);
     push({ action: "user", text: value } as Event);
     saveSession();
@@ -865,6 +908,7 @@ export default function App() {
     setResumable(null);
     setStarted(false);
     setSnap(EMPTY);
+    toastReset();
     setItems([]);
     itemsRef.current = [];
     setPending(null);
@@ -1067,8 +1111,15 @@ export default function App() {
       ? snap.active
       : playerRef.current?.active ?? fileList[0]?.path ?? "");
 
+  /** 步骤浮层在转圈：循环在跑，且确实有文件在演 */
+  const stepActive = running && snap.total > 0 && !snap.finished;
+  // 给收尾回调判断"刚才浮层是不是开着"用；ref 不受闭包那一帧的 state 影响
+  useEffect(() => {
+    stepActiveRef.current = stepActive;
+  }, [stepActive]);
+
   /** 循环正在跑时的目标文件；用户点别处时它仍然指向这里。 */
-  const writingPath = running && snap.total > 0 && !snap.finished ? snap.active : null;
+  const writingPath = stepActive ? snap.active : null;
 
   const code = activeFile ? snap.buffers[activeFile] ?? filesRef.current[activeFile] ?? "" : "";
   const langName = fileList.find((f) => f.path === activeFile)?.lang ?? "javascript";
@@ -1204,9 +1255,6 @@ export default function App() {
                     {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
                       ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
                       : "一个项目"}
-                    <span className="resume-meta">
-                      {resumable.items.length} 步 · {timeAgo(resumable.savedAt)}
-                    </span>
                   </div>
                 </div>
                 <div className="resume-actions">
@@ -1253,62 +1301,64 @@ export default function App() {
             )}
 
             {error && <div className="ask-error">{error}</div>}
+
+            {history.length > 0 && (
+              <section className="ask-history">
+                <div className="history-title">
+                  <span>最近</span>
+                  <button
+                    className="history-clear"
+                    onClick={() => {
+                      localStorage.removeItem(HISTORY_KEY);
+                      setHistory([]);
+                    }}
+                  >
+                    清空
+                  </button>
+                </div>
+                <div className="history-list">
+                  {history.map((item) => (
+                    <div key={item.id} className="resume-card history-card">
+                      <button
+                        className="resume-body resume-open"
+                        onClick={() => void openHistory(item)}
+                      >
+                        <span className="resume-title">
+                          {projectDone(item.items) ? "已完成" : "未完成"}
+                        </span>
+                        <span className="resume-text">{item.title || "最近一次"}</span>
+                      </button>
+                      <div className="resume-actions">
+                        <button
+                          className="resume-icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openHistory(item);
+                          }}
+                          title="继续修改"
+                          aria-label="继续修改"
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="resume-icon danger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void removeHistory(item);
+                          }}
+                          title="删除"
+                          aria-label="删除"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         </div>
-
-        {history.length > 0 && (
-          <section className="ask-history">
-            <div className="history-title">
-              <span>最近</span>
-              <button
-                className="history-clear"
-                onClick={() => {
-                  localStorage.removeItem(HISTORY_KEY);
-                  setHistory([]);
-                }}
-              >
-                清空
-              </button>
-            </div>
-            <div className="history-list">
-              {history.map((item) => (
-                <div key={item.id} className="history-item">
-                  <button className="hi-main" onClick={() => void openHistory(item)}>
-                    <span className="hi-title">{item.title || "最近一次"}</span>
-                    <span className="hi-meta">
-                      {item.updatedAt ? `${timeAgo(item.updatedAt)} · ` : ""}
-                      {Object.keys(item.files).length} 个文件
-                    </span>
-                  </button>
-                  <div className="hi-actions">
-                    <button
-                      className="hi-icon"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void openHistory(item);
-                      }}
-                      title="继续修改"
-                      aria-label="继续修改"
-                    >
-                      <PencilIcon />
-                    </button>
-                    <button
-                      className="hi-icon danger"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void removeHistory(item);
-                      }}
-                      title="删除"
-                      aria-label="删除"
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
     );
   }
@@ -1368,7 +1418,9 @@ export default function App() {
               >
                 <span className="file-name">{f.path}</span>
                 {writingPath === f.path && (
-                  <span className="file-coding" aria-label="正在写" title="正在写" />
+                  <span className="file-coding" aria-label="正在写" title="正在写">
+                    <GridLoader dot={3} gap={2} />
+                  </span>
                 )}
               </button>
             ))
@@ -1426,11 +1478,13 @@ export default function App() {
             </div>
 
             <div
-              className={`step-toast ${running && snap.total > 0 && !snap.finished ? "in" : ""} ${
-                ghostLabel ? "changing" : ""
-              } ${snap.active && activeFile !== snap.active ? "can-follow" : ""}`}
+              className={`step-toast ${stepActive || toastDone ? "in" : ""} ${
+                toastDone ? "done" : ""
+              } ${ghostLabel ? "changing" : ""} ${
+                snap.active && activeFile !== snap.active ? "can-follow" : ""
+              }`}
               role="button"
-              tabIndex={running && snap.total > 0 && !snap.finished ? 0 : -1}
+              tabIndex={stepActive || toastDone ? 0 : -1}
               title={snap.active ? "回到正在写的文件" : ""}
               onClick={followWriting}
               onKeyDown={(e) => {
@@ -1441,11 +1495,13 @@ export default function App() {
               }}
             >
               <span className="st-tile" aria-hidden>
-                <span className="st-grid">
-                  {Array.from({ length: 9 }, (_, i) => (
-                    <i key={i} className={`d${i}`} />
-                  ))}
-                </span>
+                {toastDone ? (
+                  <svg className="st-check" viewBox="0 0 24 24">
+                    <path d="M5 12.5L10 17.5L19 7" />
+                  </svg>
+                ) : (
+                  <GridLoader />
+                )}
               </span>
               <div className="st-stack">
                 {ghostLabel && <span className="st-ghost" key={`g-${ghostLabel}`}>{ghostLabel}</span>}
@@ -1674,6 +1730,29 @@ function elapsedText(sec: number) {
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
+/**
+ * 3×3 小方块 loading：光点沿外圈顺时针绕，拖尾在后面慢慢淡掉。
+ * 正中间那格不参与转动，只做很轻的呼吸；尺寸由 dot / gap 决定。
+ */
+function GridLoader({ dot = 4, gap = 3 }: { dot?: number; gap?: number }) {
+  return (
+    <span
+      className="grid-loader"
+      style={{ "--g-dot": `${dot}px`, "--g-gap": `${gap}px` } as CSSProperties}
+      aria-hidden
+    >
+      {Array.from({ length: 9 }, (_, i) => {
+        const ring = RING_ORDER.indexOf(i);
+        return ring < 0 ? (
+          <i key={i} className="core" />
+        ) : (
+          <i key={i} className="ring" style={{ "--i": ring } as CSSProperties} />
+        );
+      })}
+    </span>
+  );
+}
+
 /** 过程栏顶部那行：当前这一步在干什么，文字跟着模型返回的动作走。 */
 function liveStatusOf(
   items: Item[],
@@ -1773,15 +1852,6 @@ function titleOf(text: string, max = 24) {
   const one = (text || "").replace(/\s+/g, " ").trim();
   if (!one) return "新项目";
   return one.length > max ? `${one.slice(0, max)}…` : one;
-}
-
-function timeAgo(ts: number) {
-  const min = Math.floor((Date.now() - ts) / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
-  const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
-  return `${Math.floor(hour / 24)} 天前`;
 }
 
 function countLines(files: Record<string, string>) {

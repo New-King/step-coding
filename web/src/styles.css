@@ -445,20 +445,13 @@ button {
   white-space: nowrap;
 }
 
+/* 正在写的那一行：和右上角步骤浮层同一套方块 loading，只是小一号 */
 .file-coding {
-  flex: 0 0 10px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(0, 0, 0, 0.14);
-  border-top-color: var(--accent);
-  animation: coding-spin 0.75s linear infinite;
-}
-
-@keyframes coding-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
 }
 
 .file:hover {
@@ -485,111 +478,6 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-/* ---- 历史记录 ---- */
-.history-item {
-  position: relative;
-  width: 100%;
-  border-radius: 8px;
-  transition: background 0.15s var(--ease);
-}
-
-.history-item:hover,
-.history-item:focus-within {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.hi-main {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 9px 10px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.hi-title {
-  font-size: 12.5px;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hi-meta {
-  font-size: 11px;
-  color: var(--faint);
-  flex: 0 0 auto;
-  transition: opacity 0.15s var(--ease);
-}
-
-.hi-actions {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  gap: 2px;
-  padding-left: 14px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0), var(--card) 35%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s var(--ease);
-}
-
-.history-item:hover .hi-actions,
-.history-item:focus-within .hi-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.history-item:hover .hi-meta,
-.history-item:focus-within .hi-meta {
-  opacity: 0;
-}
-
-.hi-icon {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--muted);
-  transition: background 0.15s var(--ease), color 0.15s var(--ease);
-}
-
-.hi-icon svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.hi-icon:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--ink);
-}
-
-.hi-icon.danger:hover {
-  background: rgba(179, 38, 30, 0.08);
-  color: #b3261e;
-}
-
-@media (hover: none) {
-  .hi-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .hi-meta {
-    display: none;
-  }
 }
 
 .primary:disabled {
@@ -799,48 +687,6 @@ button {
   color: var(--faint);
 }
 
-.chat-intro {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.chat-intro-text {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.chat-intro-sub {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.chat-intro-sub.recent {
-  margin-top: 14px;
-  font-size: 10.5px;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.chat .history-item {
-  margin: 0 -4px;
-  width: calc(100% + 8px);
-}
-
-.chat .hi-main {
-  padding: 7px 8px;
-}
-
-.chat .hi-title {
-  font-size: 12px;
-}
-
-.chat .hi-meta {
-  font-size: 10.5px;
-}
-
 /* ---- 示例 chip ---- */
 .ask-chip {
   padding: 6px 13px;
@@ -857,20 +703,22 @@ button {
   box-shadow: var(--shadow);
 }
 
-/* ---- 中间欢迎区（原首页搬进编辑区） ---- */
-/* ---- 欢迎页（独立页面，居中） ---- */
+/* ---- 欢迎页（独立页面，居中；内容多了可以滚，别把拒绝卡挤出屏幕） ---- */
 .ask {
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 .ask-hero {
   flex: 1;
   min-height: 0;
   display: grid;
-  place-items: center;
-  padding: 40px 24px 18vh;
+  /* safe center：内容比窗口高时从顶部开始，不会被居中挤掉上半截 */
+  align-items: safe center;
+  justify-items: center;
+  padding: 40px 24px 56px;
 }
 
 
@@ -921,23 +769,17 @@ button {
 }
 
 
+/* 最近：跟在卡片下面同一列里，不再单独占页面底部那一条 */
 .ask-history {
-  flex: 0 0 auto;
-  width: 100%;
-  max-width: 620px;
-  margin: 0 auto;
-  padding: 16px 24px 26px;
-  border-top: 1px solid var(--line);
+  margin-top: 26px;
   text-align: left;
-  max-height: 40vh;
-  overflow-y: auto;
 }
 
 .history-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px 6px;
+  padding: 0 2px 8px;
   font-size: 10.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -958,7 +800,7 @@ button {
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 8px;
 }
 
 /* 等待内容时的中间占位 */
@@ -1012,15 +854,14 @@ button {
   pointer-events: auto;
 }
 
-.step-toast.can-follow:hover .st-grid i {
-  background: var(--accent-hover);
+.step-toast.can-follow:hover .grid-loader {
+  color: var(--accent-hover);
 }
 
 .step-toast.changing {
   animation: card-pop 0.52s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* 9 个小方块：高亮沿边缘走一圈，渐隐渐亮，不转圈 */
 .st-tile {
   width: 22px;
   height: 22px;
@@ -1029,53 +870,117 @@ button {
   place-items: center;
 }
 
-.st-grid {
-  width: 18px;
-  height: 18px;
+/* 9 个小方块：光点沿外圈顺时针绕圈，一圈 2.24s（每格 0.28s） */
+.grid-loader {
+  --g-dot: 4px;
+  --g-gap: 3px;
+  --g-step: 0.28s;
+  --g-lap: 2.24s;
   display: grid;
-  grid-template-columns: repeat(3, 4px);
-  grid-template-rows: repeat(3, 4px);
-  gap: 3px;
+  grid-template-columns: repeat(3, var(--g-dot));
+  grid-template-rows: repeat(3, var(--g-dot));
+  gap: var(--g-gap);
   place-content: center;
+  color: var(--ink);
+  transition: color 0.15s var(--ease);
 }
 
-.st-grid i {
-  width: 4px;
-  height: 4px;
-  border-radius: 1.2px;
-  background: var(--ink);
-  opacity: 0.12;
+.grid-loader i {
+  width: var(--g-dot);
+  height: var(--g-dot);
+  border-radius: calc(var(--g-dot) * 0.3);
+  background: currentColor;
+  opacity: 0.09;
   transform: scale(0.8);
-  animation: st-grid-fade 1.35s ease-in-out infinite;
 }
 
-.st-grid .d0 { animation-delay: 0s; }
-.st-grid .d1 { animation-delay: 0.07s; }
-.st-grid .d2 { animation-delay: 0.14s; }
-.st-grid .d3 { animation-delay: 0.21s; }
-.st-grid .d4 { animation-delay: 0.28s; }
-.st-grid .d5 { animation-delay: 0.35s; }
-.st-grid .d6 { animation-delay: 0.42s; }
-.st-grid .d7 { animation-delay: 0.49s; }
-.st-grid .d8 { animation-delay: 0.56s; }
+/* --i 是这一格在外圈里的位置（0–7），负延迟让一圈从启动时就已经在走 */
+.grid-loader i.ring {
+  animation: grid-ring var(--g-lap) linear infinite;
+  animation-delay: calc(var(--i) * var(--g-step) - var(--g-lap));
+}
 
-@keyframes st-grid-fade {
-  0%,
+.grid-loader i.core {
+  animation: grid-core var(--g-lap) ease-in-out infinite;
+}
+
+/* 亮起后沿着走过来的方向慢慢退：拖尾铺满半圈，看着才像一条光在绕，而不是一格一格闪 */
+@keyframes grid-ring {
+  0% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+  12.5% {
+    opacity: 0.68;
+    transform: scale(1.04);
+  }
+  25% {
+    opacity: 0.44;
+    transform: scale(0.96);
+  }
+  37.5% {
+    opacity: 0.26;
+    transform: scale(0.89);
+  }
+  50% {
+    opacity: 0.14;
+    transform: scale(0.83);
+  }
+  62.5%,
   100% {
     opacity: 0.1;
-    transform: scale(0.78);
-  }
-  14% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-  34% {
-    opacity: 0.3;
-    transform: scale(0.9);
-  }
-  58% {
-    opacity: 0.12;
     transform: scale(0.8);
+  }
+}
+
+@keyframes grid-core {
+  0%,
+  100% {
+    opacity: 0.09;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 0.2;
+    transform: scale(0.92);
+  }
+}
+
+/* 收尾：方块退场，换成画出来的勾 */
+.st-tile.done {
+  animation: st-check-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.st-check {
+  width: 20px;
+  height: 20px;
+}
+
+.st-check path {
+  fill: none;
+  stroke: #2e7d32;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: st-check-draw 0.46s cubic-bezier(0.65, 0, 0.35, 1) 0.05s forwards;
+}
+
+@keyframes st-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes st-check-pop {
+  0% {
+    transform: scale(0.84);
+  }
+  45% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 
@@ -1110,7 +1015,7 @@ button {
   animation: st-in 0.5s cubic-bezier(0.22, 1.25, 0.36, 1) both;
 }
 
-/* 运行中：文字上扫过一道高光，和左边 loading 一起动 */
+/* 运行中：文字上扫过一道高光，节奏压到和左边方块差不多（2.4s 一趟） */
 .step-toast.in .st-text {
   background-image: linear-gradient(100deg, var(--ink) 35%, #a8a8af 50%, var(--ink) 65%);
   background-size: 250% 100%;
@@ -1119,7 +1024,15 @@ button {
   color: transparent;
   -webkit-text-fill-color: transparent;
   animation: st-in 0.5s cubic-bezier(0.22, 1.25, 0.36, 1) both,
-    st-shimmer 1.5s linear infinite;
+    st-shimmer 2.4s linear infinite;
+}
+
+/* 收尾：勾画出来之后文字不再扫光，稳稳停住 */
+.step-toast.done .st-text {
+  background: none;
+  color: var(--ink);
+  -webkit-text-fill-color: currentColor;
+  animation: none;
 }
 
 @keyframes st-shimmer {
@@ -1176,16 +1089,21 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .st-grid i,
-  .file-coding {
+  .grid-loader i {
     animation: none;
   }
 
-  .st-grid i {
+  .grid-loader i {
     opacity: 0.35;
     transform: none;
   }
 
+  .st-check path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .st-tile.done,
   .step-toast.changing,
   .step-toast.changing .st-tile {
     animation: none;
@@ -1840,11 +1758,6 @@ button {
   background: #f4fbf4;
 }
 
-/* 首页内容多了也能滚，别把拒绝卡挤出屏幕 */
-.ask {
-  overflow-y: auto;
-}
-
 /* ---- 普通回话（不是提问，也不是拒绝） ---- */
 .tl.say {
   align-self: flex-start;
@@ -1993,6 +1906,7 @@ button {
 }
 
 .resume-title {
+  display: block;
   font-size: 10.5px;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -2000,17 +1914,23 @@ button {
 }
 
 .resume-text {
+  display: block;
   margin-top: 4px;
   font-size: 13px;
   color: var(--ink);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.resume-meta {
-  font-size: 11px;
-  color: var(--muted);
+/* ---- 最近：和「上次没做完」同一张卡，只用看上面的状态字区分 ---- */
+.history-card {
+  margin-top: 0;
+}
+
+.resume-open {
+  text-align: left;
+  cursor: pointer;
 }
 
 .resume-actions {
