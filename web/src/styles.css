@@ -167,6 +167,16 @@ button {
   transform: scale(0.96);
 }
 
+.ghost:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ghost:disabled:hover {
+  background: var(--card);
+  border-color: var(--line);
+}
+
 .primary {
   height: 30px;
   padding: 0 16px;

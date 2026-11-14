@@ -232,6 +232,8 @@ export default function App() {
   const stepLabelRef = useRef("");
   const toastTimerRef = useRef<number | null>(null);
   const stepActiveRef = useRef(false);
+  /** 正在重播：只让播放器演，不请求模型、也不走循环 */
+  const replayingRef = useRef(false);
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -310,10 +312,25 @@ export default function App() {
   useEffect(() => {
     const p = playerRef.current!;
     p.cps = cps;
-    p.onUpdate = (s) => setSnap(s);
+    p.onUpdate = (s) => {
+      setSnap(s);
+      // 重播时左栏文件列表没有服务端的 applyChanges 兜底，跟着播放器长出来
+      if (replayingRef.current) filesRef.current = { ...s.buffers };
+    };
     p.onFinish = () => {};
     p.onExhausted = () => {
       filesRef.current = p.files();
+
+      // 重播演完了：和正常收尾一样，先把浮层切成勾，再收起
+      if (replayingRef.current) {
+        replayingRef.current = false;
+        statusRef.current = "done";
+        toastSettle();
+        setRunning(false);
+        note("replay", "重播结束");
+        return;
+      }
+
       const after = afterPlayerRef.current;
       if (after) {
         afterPlayerRef.current = null;
@@ -452,6 +469,8 @@ export default function App() {
 
   /** 唯一的循环驱动：一次一步，等这一步演完再问下一步。 */
   const pump = async () => {
+    // 重播是纯回放：就算有人误触了暂停/继续，也不能去请求下一步
+    if (replayingRef.current) return;
     if (pumpingRef.current) {
       note("pump", "已在跑，忽略这次触发");
       return;
@@ -867,8 +886,29 @@ export default function App() {
     note("stop", "本轮结束");
   };
 
+  /** 退出重播：还没演完的步骤一次性落到底，别把半截文件当成现场存下来 */
+  const stopReplay = () => {
+    if (!replayingRef.current) return;
+    replayingRef.current = false;
+    const p = playerRef.current!;
+    p.finishNow();
+    filesRef.current = p.files();
+    note("replay", "中途退出，直接落到最终文件");
+  };
+
   /** 返回首页：停下手上的活，但把现场留着，回来可以继续 */
   const goHome = () => {
+    // 重播只是回放，现场早就是完整的：别再存一份「没做完」
+    if (replayingRef.current) {
+      stopReplay();
+      playerRef.current!.stop();
+      playerRef.current!.paused = true;
+      setPaused(true);
+      setStarted(false);
+      note("replay", "重播中途返回");
+      return;
+    }
+
     playerRef.current!.stop();
     playerRef.current!.paused = true;
     setPaused(true);
@@ -939,6 +979,12 @@ export default function App() {
     p.paused = next;
     setPaused(next);
 
+    // 重播暂停 / 继续：只动播放器，不碰循环状态（循环这边已经结束了）
+    if (replayingRef.current) {
+      note("pause", next ? "重播暂停" : "重播继续");
+      return;
+    }
+
     if (next) {
       statusRef.current = "paused";
       setRunning(false);
@@ -953,12 +999,20 @@ export default function App() {
     if (!next && !afterPlayerRef.current) void pump();
   };
 
+  /**
+   * 重播：把这一场里的文件动作按原来的节奏再演一遍。
+   *
+   * 全程只用时间线里已有的动作，不请求模型；
+   * 但要把现场先退回开场状态（文件清空、浮层亮起），否则看起来和第一次不一样。
+   */
   const replay = () => {
+    if (statusRef.current === "running" || replayingRef.current) return;
+
     const after = afterPlayerRef.current;
     afterPlayerRef.current = null;
     after?.();
 
-    const files = startFilesRef.current;
+    const base = startFilesRef.current;
     const steps: Step[] = [];
     for (const item of itemsRef.current) {
       const ev = item.ev;
@@ -970,17 +1024,28 @@ export default function App() {
         steps.push({ type: "delete", path: ev.path, banner: ev.label });
       }
     }
-    if (!steps.length) return;
-    filesRef.current = { ...files };
+    if (!steps.length) {
+      note("replay", "这一场没有文件动作，没什么可重播的");
+      return;
+    }
+
     const player = playerRef.current!;
     player.paused = false;
     setPaused(false);
+    setPeek(null);
+    setSnap(EMPTY);
+    filesRef.current = { ...base };
+    replayingRef.current = true;
+    toastReset();
+    resetRunClock();
+    setRunning(true);
+    note("replay", `从开场重演 ${steps.length} 步`);
     player.load({
       task: "重播",
       steps,
-      files: Object.keys(files).length ? files : { "": "" },
-      initial: files,
-      stats: { files: Object.keys(files).length, steps: steps.length, lines: 0 },
+      files: base,
+      initial: base,
+      stats: { files: Object.keys(base).length, steps: steps.length, lines: 0 },
     });
   };
 
@@ -1190,6 +1255,8 @@ export default function App() {
   };
 
   const exportZip = () => {
+    // 重播中途导出的应该是完整结果，不是演到一半的文件
+    stopReplay();
     const files = filesRef.current;
     const entries = Object.keys(files)
       .map((path) => ({ path, content: files[path] }))
@@ -1392,7 +1459,9 @@ export default function App() {
           <b>{cps}</b>
         </label>
         <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
-        <button className="ghost" onClick={replay}>重播</button>
+        <button className="ghost" onClick={replay} disabled={running} title="把这一场重新演一遍（不调用模型）">
+          重播
+        </button>
         <button className="primary" onClick={exportZip}>导出代码</button>
         <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
           日志{logs.length > 0 ? ` ${logs.length}` : ""}
