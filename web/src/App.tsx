@@ -731,6 +731,30 @@ export default function App() {
 
   /* ------------------------------------------------------------ 交互 */
 
+  /**
+   * 新一轮开口时把代码区那张浮层清干净。
+   *
+   * 上一轮的 banner / hint 还留在 snap 里，不清的话新一轮头几秒顶着上一轮
+   * 最后一句「正在写 xxx」，等第一个文件动作到了才换——看起来像步骤卡住了。
+   * buffers 不能动：文件内容要留着，只清显示用的字段。
+   */
+  const clearStage = () => {
+    // 上一轮还在逐字写：这时候清掉，浮层立刻变空，但文件其实还在写——不如让它写完
+    if (playerRef.current?.busy) return;
+    stepLabelRef.current = "";
+    setGhostLabel("");
+    setSnap((s) => ({
+      ...s,
+      banner: "",
+      hint: "",
+      say: "",
+      stepIndex: 0,
+      total: 0,
+      typing: false,
+      finished: false,
+    }));
+  };
+
   const answerAsk = async (value: string) => {
     const text = value.trim();
     if (!text || !pending || answeringRef.current) return;
@@ -753,6 +777,7 @@ export default function App() {
         ? text
         : pending.map((q, i) => `${q.question} → ${next[i]}`).join("\n");
 
+    clearStage();
     resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = payload;
@@ -790,6 +815,7 @@ export default function App() {
 
     playerRef.current!.paused = false;
     setPaused(false);
+    clearStage();
     resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = value;
@@ -1834,10 +1860,62 @@ function countLines(files: Record<string, string>) {
 }
 
 /**
+ * 过程块收起时的一句话：这一趟读了几个文件、改了几处、搜了几次。
+ *
+ * 只说做过的事，思考 / 计划不进这句——它们是脑内动作，展开就能看到，
+ * 列出来只会把"刚干了什么"淹掉。
+ */
+function processSummary(items: Item[]) {
+  const looks = new Set<string>();
+  let searches = 0;
+  let writes = 0;
+  let edits = 0;
+  let deletes = 0;
+  let quiet = 0;
+
+  for (const it of items) {
+    const ev = it.ev;
+    switch (ev.action) {
+      case "look":
+        looks.add(ev.path || "根目录");
+        break;
+      case "search":
+        searches += 1;
+        break;
+      case "write":
+        writes += 1;
+        break;
+      case "edit":
+        edits += 1;
+        break;
+      case "delete":
+        deletes += 1;
+        break;
+      case "think":
+      case "plan":
+        quiet += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
+  const parts: string[] = [];
+  if (searches) parts.push(`搜索了 ${searches} 次`);
+  if (looks.size) parts.push(`读取了 ${looks.size} 个文件`);
+  if (writes) parts.push(`新建了 ${writes} 个文件`);
+  if (edits) parts.push(`编辑了 ${edits} 处`);
+  if (deletes) parts.push(`删除了 ${deletes} 个文件`);
+
+  if (parts.length === 0) return quiet ? `思考了 ${quiet} 步，没动文件` : "没有动手";
+  return parts.join(" · ");
+}
+
+/**
  * 整个过程收成对话顶部的一块：默认收起，点开才看每一步。
  *
  * live 时这一行就是「正在做什么」——loading + 当前动作 + 累计时间，动作一变文字就跟着变；
- * 点开则是这一段的每一步（思考 / 查看 / 写入…），每一步还能再展开看详情。
+ * 收起时是一句总结（读了几个文件、改了几处），点开才是每一步。
  * 收起时钉在顶部，对话往下滚也还在。
  */
 function ProcessGroup({
@@ -1855,6 +1933,7 @@ function ProcessGroup({
 }) {
   const [open, setOpen] = useState(false);
   const hasBody = items.length > 0;
+  const summary = useMemo(() => processSummary(items), [items]);
 
   return (
     <div className={`tl-group ${open ? "open" : "pinned"} ${live ? "live" : ""}`}>
@@ -1862,15 +1941,23 @@ function ProcessGroup({
         className="tl-group-head"
         onClick={() => hasBody && setOpen((v) => !v)}
         aria-expanded={open}
-        title={hasBody ? (open ? "收起过程" : "展开过程") : undefined}
+        title={
+          hasBody
+            ? open
+              ? "收起过程"
+              : live
+                ? "展开过程"
+                : `${summary} · 点开看每一步`
+            : undefined
+        }
       >
         {live && (
           <span className="run-tile" aria-hidden>
             {spinning ? <GridLoader dot={3} gap={2} /> : <span className="run-idle-dot" />}
           </span>
         )}
-        <span className={`tl-group-title ${live ? "live" : ""}`}>
-          {live ? label || "处理中" : `过程 · ${items.length} 步`}
+        <span className={`tl-group-title ${live ? "live" : "summary"}`}>
+          {live ? label || "处理中" : summary}
         </span>
         {live && time && <span className="tl-group-time">{time}</span>}
         {hasBody && <span className="tl-group-chevron" aria-hidden />}
@@ -2069,17 +2156,10 @@ function detailOf(
         </div>
       );
 
+    // 写文件 / 改文件不铺代码：正文区就在旁边，时间线再抄一遍只会越点越深。
+    // 展开只看思路——思考全文、计划步骤、搜索结果。
     case "write":
-      return ev.code.trim() ? <CodeDetail path={ev.path} code={ev.code} /> : null;
-
     case "edit":
-      return (
-        <div className="tl-diff">
-          <pre className="tl-diff-del">{ev.find}</pre>
-          <pre className="tl-diff-add">{ev.replace}</pre>
-        </div>
-      );
-
     case "delete":
     case "look":
       return null;
@@ -2121,19 +2201,3 @@ function detailOf(
   }
 }
 
-function CodeDetail({ path, code }: { path: string; code: string }) {
-  const html = useMemo(() => {
-    try {
-      return hljs.highlight(code, { language: langOf(path) }).value;
-    } catch {
-      return "";
-    }
-  }, [path, code]);
-
-  return (
-    <div className="tl-code-wrap">
-      <div className="tl-code-meta">{code.split("\n").length - 1} 行</div>
-      {html ? <pre className="tl-code" dangerouslySetInnerHTML={{ __html: html }} /> : <pre className="tl-code">{code}</pre>}
-    </div>
-  );
-}

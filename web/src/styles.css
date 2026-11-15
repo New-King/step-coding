@@ -2171,6 +2171,15 @@ button {
   color: var(--muted);
 }
 
+/* 收起时是一句总结：一行放不下就省略，全文挂在 title 上 */
+.tl-group-title.summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 正在做事时这一行是主角：字号跟上正文，文字慢慢扫光 */
 .tl-group-title.live {
   /* 不抢满整行：时间紧跟在文字后面，长了才自己缩 */
@@ -2315,65 +2324,6 @@ button {
   display: flex;
   flex-direction: column;
   gap: 5px;
-}
-
-.tl-diff {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-top: 2px;
-}
-
-.tl-diff-del,
-.tl-diff-add {
-  margin: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 180px;
-  overflow: auto;
-}
-
-.tl-diff-del {
-  background: #fdf0ef;
-  color: #8c2b24;
-}
-
-.tl-diff-add {
-  background: #eff8ef;
-  color: #23642a;
-}
-
-.tl-code-wrap {
-  margin-top: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  background: var(--code-bg);
-  overflow: hidden;
-}
-
-.tl-code-meta {
-  padding: 4px 9px;
-  font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.4);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.tl-code {
-  margin: 0;
-  padding: 8px 10px;
-  max-height: 220px;
-  overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--code-ink);
-  white-space: pre;
-  tab-size: 2;
 }
 
 .status.paused {

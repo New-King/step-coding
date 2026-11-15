@@ -63,38 +63,47 @@ function tagLabel(tag: string, attrs: string) {
   return `<${tag}>`;
 }
 
+/** `.row input[type="text"]` → `.row`：只说这条规则管哪一块，别把整串选择器塞进浮层 */
+function cssHead(sel: string) {
+  const head = sel.trim().split(/[\s>+~]+/)[0].split(/[:\[]/)[0];
+  return head || sel.trim();
+}
+
 /**
  * 正在打字的这一段属于哪一块代码？
  *
  * 从插入点往回找最近的线索：注释行优先（生成出来的代码基本每块都有注释），
  * 其次函数 / 变量 / 类 / CSS 选择器 / HTML 标签。找不到就返回空串，退回整步的标题。
+ *
+ * 返回的是"这一块叫什么"（`save 的逻辑`、`「登录表单」`），不带"正在写"——
+ * 前缀由界面拼，别两边都加，会变成「正在写 正在写 …」。
  */
 export function sectionAt(text: string, at: number): string {
   const lines = text.slice(0, at).split("\n");
   const from = Math.max(0, lines.length - HINT_LINES);
-  // 从倒数第二行看：最后一行还在敲，读它会出现"正在写 登录表"这种半截词
+  // 从倒数第二行看：最后一行还在敲，读它会出现"登录表"这种半截词
   for (let i = lines.length - 2; i >= from; i -= 1) {
     const line = lines[i].trim();
     if (!line) continue;
 
     // 注释是这一块的名字，用引号括起来，和代码标识区分开
     const comment = COMMENT_LINE.exec(line);
-    if (comment?.[1]) return `正在写「${clip(comment[1], 10)}」`;
+    if (comment?.[1]) return `「${clip(comment[1], 10)}」`;
 
     const fn = FN_LINE.exec(line);
-    if (fn) return `正在写 ${clip(fn[1], 12)}() 方法`;
+    if (fn) return `${clip(fn[1], 12)}() 方法`;
 
     const handle = HANDLE_LINE.exec(line);
-    if (handle) return `正在写 ${clip(handle[1], 12)} 的逻辑`;
+    if (handle) return `${clip(handle[1], 12)} 的逻辑`;
 
     const cls = CLASS_LINE.exec(line);
-    if (cls) return `正在写 ${clip(cls[1], 12)} 类`;
+    if (cls) return `${clip(cls[1], 12)} 类`;
 
     const css = CSS_LINE.exec(line);
-    if (css) return `正在写 ${clip(css[1].trim(), 12)} 样式`;
+    if (css) return `${cssHead(css[1])} 的样式`;
 
     const tag = TAG_LINE.exec(line);
-    if (tag) return `正在写 ${tagLabel(tag[1], tag[2])}`;
+    if (tag) return tagLabel(tag[1], tag[2]);
   }
   return "";
 }
