@@ -1600,10 +1600,7 @@ export default function App() {
 
           </div>
           <div className="chat-foot">
-            {!running && !pending && items.length > 0 && (
-              <div className="idle-hint">轮到你了 · 接着说一句就继续</div>
-            )}
-            {composer(pending ? "回答上面的问题，或直接写…" : "接着说一句…")}
+            {composer(pending ? "回答上面的问题，或直接写…" : "")}
           </div>
         </aside>
       </main>
