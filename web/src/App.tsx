@@ -67,8 +67,18 @@ type HistoryItem = {
 
 const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 
+/** 时间线分成两类：对话（用户 / 回话 / 提问 / 拒绝 / 收尾 / 报错）和过程（思考、查看、计划、搜索、写改删） */
+const PROCESS_KINDS = new Set(["think", "look", "plan", "search", "write", "edit", "delete"]);
+
+type Row =
+  | { kind: "item"; item: Item }
+  | { kind: "group"; key: string; items: Item[] };
+
 /** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再看两秒才收 */
 const TOAST_DONE_HOLD = 2000;
+
+/** 发出去之后、模型第一个动作回来之前，状态行轮着换的词 */
+const WAITING_WORDS = ["思考中", "正在分析", "正在规划", "处理中"];
 
 /** 3×3 方格的顺时针外圈（0 是左上角）；正中间那格不参与转圈 */
 const RING_ORDER = [0, 1, 2, 5, 8, 7, 6, 3];
@@ -88,6 +98,7 @@ const EMPTY: Snapshot = {
   buffers: {},
   active: null,
   banner: "",
+  hint: "",
   say: "",
   stepIndex: 0,
   total: 0,
@@ -183,7 +194,7 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("trace") === "1"
   );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
-  const [processOpen, setProcessOpen] = useState(true);
+
   const [elapsed, setElapsed] = useState(0);
   /** 步骤浮层收尾：方块停转、画个勾，停 2 秒再收起 */
   const [toastDone, setToastDone] = useState(false);
@@ -207,6 +218,7 @@ export default function App() {
   const logsRef = useRef<{ t: number; tag: string; text: string }[]>([]);
   const runStartRef = useRef(0);
   const stepLabelRef = useRef("");
+  const bannerRef = useRef("");
   const toastTimerRef = useRef<number | null>(null);
   const stepActiveRef = useRef(false);
   /** 正在重播：只让播放器演，不请求模型、也不走循环 */
@@ -355,10 +367,6 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [running]);
 
-  // 有提问或报错时必须展开，不然用户看不到问题
-  useEffect(() => {
-    if (pending || error) setProcessOpen(true);
-  }, [pending, error]);
 
   /* ------------------------------------------------------------ 循环 */
 
@@ -1036,8 +1044,66 @@ export default function App() {
   /** 这一场到底做完没有：顶栏和「最近」用的是同一个判断 */
   const projectIsDone = projectDone(items);
 
-  const liveLabel = liveStatusOf(items, pending, askIndex, running, paused);
+  /** 刚发出去、模型还没吐第一个动作：这几个词轮着换，别让界面像卡死 */
+  const waitingFirst =
+    running && !paused && !pending && items.length > 0 && items[items.length - 1].kind === "user";
+  const [waitWord, setWaitWord] = useState(0);
+  useEffect(() => {
+    if (!waitingFirst) return;
+    setWaitWord(0);
+    const id = window.setInterval(
+      () => setWaitWord((n) => (n + 1) % WAITING_WORDS.length),
+      2000
+    );
+    return () => window.clearInterval(id);
+  }, [waitingFirst]);
+
+  /** 模型已经说「收尾」了，但画面还在一个字一个字敲：这时候不是"收尾"，是在写文件 */
+  const lastItem = items[items.length - 1];
+  const typingOut = lastItem?.ev.action === "finish" && !!lastItem.pending;
+
+  const liveLabel = waitingFirst
+    ? WAITING_WORDS[waitWord]
+    : typingOut && snap.typing && snap.active
+      ? `正在编写 ${snap.active}`
+      : liveStatusOf(items, pending, askIndex, running, paused);
   const runTime = runStartRef.current ? elapsedText(elapsed) : "";
+  /** 还在跑（或暂停着）：时间线末尾那一行是「正在做的事」，而不是「过程 · N 步」 */
+  const tailLive = running || paused;
+
+  /** 时间线按「对话 / 过程」切段：过程连着的一段收成一块，默认不展开 */
+  const rows = useMemo(() => {
+    const out: Row[] = [];
+    for (const item of items) {
+      if (!PROCESS_KINDS.has(item.kind)) {
+        out.push({ kind: "item", item });
+        continue;
+      }
+      const last = out[out.length - 1];
+      if (last && last.kind === "group") last.items.push(item);
+      else out.push({ kind: "group", key: `g${item.id}`, items: [item] });
+    }
+    return out;
+  }, [items]);
+
+  /**
+   * 最后一行「看得见」的在哪：收尾中那条 finish 自己渲染成空，
+   * 不跳过它的话，状态行会单独多出一行，和过程块分成两截。
+   */
+  const lastVisible = useMemo(() => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const row = rows[i];
+      if (row.kind === "group") return i;
+      if (row.item.ev.action === "finish" && row.item.pending) continue;
+      return i;
+    }
+    return -1;
+  }, [rows]);
+
+  const ideaHandler = (itemId: number) => (text: string) => {
+    markUsed(itemId, text);
+    void send(text);
+  };
 
   const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
   const activeFile =
@@ -1068,7 +1134,8 @@ export default function App() {
     }
   }, [code, langName]);
 
-  const stepLabel = snap.banner || "";
+  // 右上角跟着光标走：说到哪一块就写哪一块，没有线索才退回整步的标题
+  const stepLabel = snap.hint ? `正在写 ${snap.hint}` : snap.banner || "";
   useEffect(() => {
     if (!snap.total || snap.finished) {
       stepLabelRef.current = "";
@@ -1084,6 +1151,19 @@ export default function App() {
     }
     stepLabelRef.current = next;
   }, [stepLabel, snap.total, snap.finished]);
+
+  // 卡片弹一下只在「换了一步」时做：细节提示每几秒就变，跟着弹会晃得烦
+  const [cardPop, setCardPop] = useState(false);
+  useEffect(() => {
+    if (!snap.banner) return;
+    if (bannerRef.current && bannerRef.current !== snap.banner) {
+      setCardPop(true);
+      const timer = window.setTimeout(() => setCardPop(false), 520);
+      bannerRef.current = snap.banner;
+      return () => window.clearTimeout(timer);
+    }
+    bannerRef.current = snap.banner;
+  }, [snap.banner]);
 
   /** 离底部够近才算"跟着走"，用户往上翻过就停手。 */
   const nearBottom = (el: HTMLElement) =>
@@ -1399,7 +1479,7 @@ export default function App() {
             <div
               className={`step-toast ${stepActive || toastDone ? "in" : ""} ${
                 toastDone ? "done" : ""
-              } ${ghostLabel ? "changing" : ""} ${
+              } ${cardPop ? "changing" : ""} ${
                 snap.active && activeFile !== snap.active ? "can-follow" : ""
               }`}
               role="button"
@@ -1414,13 +1494,7 @@ export default function App() {
               }}
             >
               <span className="st-tile" aria-hidden>
-                {toastDone ? (
-                  <svg className="st-check" viewBox="0 0 24 24">
-                    <path d="M5 12.5L10 17.5L19 7" />
-                  </svg>
-                ) : (
-                  <GridLoader />
-                )}
+                {toastDone ? <CheckMark /> : <GridLoader />}
               </span>
               <div className="st-stack">
                 {ghostLabel && <span className="st-ghost" key={`g-${ghostLabel}`}>{ghostLabel}</span>}
@@ -1431,40 +1505,44 @@ export default function App() {
         </section>
 
         <aside className="chat">
-          <button
-            className={`run-status ${running ? "on" : ""} ${processOpen ? "open" : ""}`}
-            onClick={() => setProcessOpen((v) => !v)}
-            aria-expanded={processOpen}
-            title={processOpen ? "收起过程" : "展开过程"}
-          >
-            <span className="run-dots" aria-hidden>
-              <i />
-              <i />
-              <i />
-            </span>
-            <span className={`run-label ${running ? "live" : ""}`}>{liveLabel}</span>
-            {runTime && <span className="run-time">{runTime}</span>}
-            <span className="run-chevron" aria-hidden />
-          </button>
           <div
-            className={`chat-log ${processOpen ? "" : "collapsed"}`}
+            className="chat-log"
             ref={logRef}
             onScroll={() => {
               const el = logRef.current;
               if (el) logStickRef.current = nearBottom(el);
             }}
           >
-            {items.map((item) => (
-              <TimelineItem
-                key={item.id}
-                item={item}
-                live={item.ev.action === "ask" && pending === item.ev.questions}
-                onIdea={(text) => {
-                  markUsed(item.id, text);
-                  void send(text);
-                }}
+            {rows.map((row, i) =>
+              row.kind === "group" ? (
+                <ProcessGroup
+                  key={i === lastVisible && tailLive ? "live-group" : row.key}
+                  items={row.items}
+                  live={i === lastVisible && tailLive}
+                  label={liveLabel}
+                  time={runTime}
+                  spinning={running && !paused}
+                />
+              ) : (
+                <TimelineItem
+                  key={row.item.id}
+                  item={row.item}
+                  live={row.item.ev.action === "ask" && pending === row.item.ev.questions}
+                  onIdea={ideaHandler(row.item.id)}
+                />
+              )
+            )}
+
+            {tailLive && (lastVisible < 0 || rows[lastVisible].kind !== "group") && (
+              <ProcessGroup
+                key="live-group"
+                items={[]}
+                live
+                label={liveLabel}
+                time={runTime}
+                spinning={running && !paused}
               />
-            ))}
+            )}
 
             {pending && (
               <div className="ask-card">
@@ -1523,10 +1601,7 @@ export default function App() {
               </div>
             )}
 
-            </div>
-          {!processOpen && (
-            <div className="chat-collapsed-tip">过程已收起 · 点上方展开</div>
-          )}
+          </div>
           <div className="chat-foot">
             {!running && !pending && items.length > 0 && (
               <div className="idle-hint">轮到你了 · 接着说一句就继续</div>
@@ -1649,6 +1724,15 @@ function elapsedText(sec: number) {
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
+/** 收尾的那个勾：描边画出来，浮层和状态行共用 */
+function CheckMark({ size = 20 }: { size?: number }) {
+  return (
+    <svg className="st-check" viewBox="0 0 24 24" style={{ width: size, height: size }} aria-hidden>
+      <path d="M5 12.5L10 17.5L19 7" />
+    </svg>
+  );
+}
+
 /**
  * 3×3 小方块 loading：光点沿外圈顺时针绕，拖尾在后面慢慢淡掉。
  * 正中间那格不参与转动，只做很轻的呼吸；尺寸由 dot / gap 决定。
@@ -1713,14 +1797,15 @@ function liveStatusOf(
           ? `搜索「${ev.query}」· ${ev.results.length} 条`
           : `搜索「${ev.query}」`;
         break;
+      // 这里只说文件级：具体写到哪一块由代码区右上角那行跟着光标变
       case "write":
-        label = `写 ${ev.path} · ${ev.label}`;
+        label = `正在编写 ${ev.path}`;
         break;
       case "edit":
-        label = `改 ${ev.path} · ${ev.label}`;
+        label = `正在修改 ${ev.path}`;
         break;
       case "delete":
-        label = `删除 ${ev.path}`;
+        label = `正在删除 ${ev.path}`;
         break;
       case "ask":
         label = `提问 · ${ev.questions[0]?.question ?? ""}`;
@@ -1775,6 +1860,58 @@ function titleOf(text: string, max = 24) {
 
 function countLines(files: Record<string, string>) {
   return Object.values(files).reduce((n, body) => n + body.split("\n").length - 1, 0);
+}
+
+/**
+ * 连着的一段过程收成一块：默认收起，点开才看每一步。
+ *
+ * live 时这一行就是「正在做什么」——loading + 当前动作 + 累计时间，动作一变文字就跟着变；
+ * 点开则是这一段的每一步（思考 / 查看 / 写入…），每一步还能再展开看详情。
+ */
+function ProcessGroup({
+  items,
+  live,
+  label,
+  time,
+  spinning,
+}: {
+  items: Item[];
+  live?: boolean;
+  label?: string;
+  time?: string;
+  spinning?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasBody = items.length > 0;
+
+  return (
+    <div className={`tl-group ${open ? "open" : ""} ${live ? "live" : ""}`}>
+      <button
+        className="tl-group-head"
+        onClick={() => hasBody && setOpen((v) => !v)}
+        aria-expanded={open}
+        title={hasBody ? (open ? "收起过程" : "展开过程") : undefined}
+      >
+        {live && (
+          <span className="run-tile" aria-hidden>
+            {spinning ? <GridLoader dot={3} gap={2} /> : <span className="run-idle-dot" />}
+          </span>
+        )}
+        <span className={`tl-group-title ${live ? "live" : ""}`}>
+          {live ? label || "处理中" : `过程 · ${items.length} 步`}
+        </span>
+        {live && time && <span className="tl-group-time">{time}</span>}
+        {hasBody && <span className="tl-group-chevron" aria-hidden />}
+      </button>
+      {open && hasBody && (
+        <div className="tl-group-body">
+          {items.map((it) => (
+            <TimelineItem key={it.id} item={it} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TimelineItem({

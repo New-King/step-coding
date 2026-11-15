@@ -15,16 +15,79 @@ export type Plan = {
   initial?: Record<string, string>;
 };
 
+/**
+ * 单个文件最多敲多久（秒）。
+ *
+ * 节奏是给"看着它写"用的，但长文件按固定字速敲要一两分钟，收尾阶段就变得没完没了；
+ * 超过这个时长就自动提速，保证再长的文件也不会把整场的等待拖在这上面。
+ */
+const MAX_TYPE_SECONDS = 8;
+
 export type Snapshot = {
   buffers: Record<string, string>;
   active: string | null;
   banner: string;
+  /** 打字打到的这一小块在干什么（最近的注释 / 函数 / 选择器），没有就是空串 */
+  hint: string;
   say: string;
   stepIndex: number;
   total: number;
   typing: boolean;
   finished: boolean;
 };
+
+/** 往回最多找这么多行，再往前就不是"这一块"了 */
+const HINT_LINES = 60;
+/** 提示别太长，右上角浮层就那么宽，再长就截掉 */
+const HINT_MAX = 12;
+
+const COMMENT_LINE = /^(?:\/\/|#|--|\/\*|\*|<!--)\s*(.+?)\s*(?:\*\/|-->)?$/;
+const FN_LINE = /^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)/;
+const HANDLE_LINE = /^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?(?:function\b|\()/;
+const CLASS_LINE = /^(?:export\s+)?(?:class|interface|struct|type)\s+([\w$]+)/;
+const CSS_LINE = /^([.#][\w-][^{]*)\{/;
+const TAG_LINE = /^<([a-z][\w-]*)/;
+
+function clip(text: string) {
+  if (text.length <= HINT_MAX) return text;
+  // 截断处别留半句标点
+  return `${text.slice(0, HINT_MAX).replace(/[，。；、,.;:：\s]+$/, "")}…`;
+}
+
+/**
+ * 正在打字的这一段属于哪一块代码？
+ *
+ * 从插入点往回找最近的线索：注释行优先（生成出来的代码基本每块都有注释），
+ * 其次函数 / 变量 / 类 / CSS 选择器 / HTML 标签。找不到就返回空串，退回整步的标题。
+ */
+export function sectionAt(text: string, at: number): string {
+  const lines = text.slice(0, at).split("\n");
+  const from = Math.max(0, lines.length - HINT_LINES);
+  // 从倒数第二行看：最后一行还在敲，读它会出现"正在写 登录表"这种半截词
+  for (let i = lines.length - 2; i >= from; i -= 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const comment = COMMENT_LINE.exec(line);
+    if (comment?.[1]) return clip(comment[1]);
+
+    const fn = FN_LINE.exec(line);
+    if (fn) return clip(`${fn[1]}()`);
+
+    const handle = HANDLE_LINE.exec(line);
+    if (handle) return clip(`${handle[1]}()`);
+
+    const cls = CLASS_LINE.exec(line);
+    if (cls) return clip(cls[1]);
+
+    const css = CSS_LINE.exec(line);
+    if (css) return clip(css[1].trim());
+
+    const tag = TAG_LINE.exec(line);
+    if (tag) return clip(`<${tag[1]}>`);
+  }
+  return "";
+}
 
 /**
  * 播放器：把"改文件"这件事按人的速度演出来。
@@ -43,6 +106,10 @@ export class Player {
   private pending = "";
   private pendingPath = "";
   private pendingAt = 0;
+  private pendingLen = 0;
+  /** 最近算出来的"正在写哪一块"，以及上次算它的时间（打字太快，不节流会一直闪） */
+  private hint = "";
+  private hintAt = 0;
   private carry = 0;
   private last = 0;
   private waitUntil = 0;
@@ -204,7 +271,9 @@ export class Player {
     }
 
     if (this.pending) {
-      const speed = this.cps * (1 + Math.sin(now / 900) * 0.08);
+      // 字速取「滑杆设定」和「这个文件最多敲 MAX_TYPE_SECONDS」里更快的一个
+      const floor = this.pendingLen / MAX_TYPE_SECONDS;
+      const speed = Math.max(this.cps, floor) * (1 + Math.sin(now / 900) * 0.08);
       this.carry += (speed * dt) / 1000;
       const take = Math.floor(this.carry);
       if (take > 0) {
@@ -248,6 +317,7 @@ export class Player {
         this.active = step.path;
         this.banner = step.banner;
         this.pending = step.code;
+        this.pendingLen = step.code.length;
         this.pendingPath = step.path;
         this.pendingAt = 0;
         this.waitUntil = now + (step.delay ?? 160);
@@ -258,6 +328,7 @@ export class Player {
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         this.pending = step.code;
+        this.pendingLen = step.code.length;
         this.pendingPath = step.path;
         this.pendingAt = body.length;
         break;
@@ -268,6 +339,7 @@ export class Player {
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         const idx = body.indexOf(step.find);
+        this.pendingLen = step.replace.length;
         if (idx < 0) {
           // 找不到就接着末尾写，不吞内容
           this.pending = step.replace;
@@ -303,10 +375,20 @@ export class Player {
   }
 
   private emit() {
+    // 提示每 700ms 最多更新一次：跟着光标逐行变，太勤会闪成一片
+    const now = performance.now();
+    if (!this.pending) {
+      this.hint = "";
+    } else if (this.pendingPath && now - this.hintAt > 700) {
+      this.hintAt = now;
+      this.hint = sectionAt(this.buffers[this.pendingPath] ?? "", this.pendingAt);
+    }
+
     this.onUpdate({
       buffers: { ...this.buffers },
       active: this.active,
       banner: this.banner,
+      hint: this.hint,
       say: this.say,
       stepIndex: Math.min(this.cursor, this.steps.length),
       total: this.steps.length,
