@@ -468,6 +468,18 @@ button {
   white-space: nowrap;
 }
 
+/* 删除：先停在这一行上淡出，到点才真的从列表里消失，选中随之回到第一个文件 */
+.file.removing {
+  animation: file-remove 0.28s var(--ease) forwards;
+}
+
+@keyframes file-remove {
+  to {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
 /* 正在写的那一行：和右上角步骤浮层同一套方块 loading，只是小一号 */
 .file-coding {
   flex: 0 0 13px;
@@ -2143,20 +2155,12 @@ button {
   border: 1.5px solid var(--faint);
 }
 
-/* ---- 过程块：全部思考 / 查看 / 写入收成一条，放在对话顶部，默认收起 ---- */
+/* ---- 过程块：一轮里的思考 / 查看 / 写入收成一条，排在这轮回复前面，默认收起 ---- */
 .tl-group {
   align-self: stretch;
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-/* 收起时钉在顶部：只是一行，对话往下滚它也还在 */
-.tl-group.pinned {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--card);
 }
 
 .tl-group-head {

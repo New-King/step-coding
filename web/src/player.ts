@@ -16,16 +16,17 @@ export type Plan = {
 };
 
 /**
- * 单个文件最多敲多久（秒）。
+ * 打字速度只由滑杆的 `cps`（每秒字符数）决定，不再按文件长度偷偷提速。
  *
- * 节奏是给"看着它写"用的，但长文件按固定字速敲要一两分钟，收尾阶段就变得没完没了；
- * 超过这个时长就自动提速，保证再长的文件也不会把整场的等待拖在这上面。
+ * 早先给单个文件设了 8 秒上限，长文件会被强制加速，于是滑杆调多慢都一个样。
+ * 现在慢就是慢：1500 字的文件在 60 cps 下约 25 秒，想快自己把滑杆推上去。
  */
-const MAX_TYPE_SECONDS = 8;
 
 export type Snapshot = {
   buffers: Record<string, string>;
   active: string | null;
+  /** 正在演删除的文件：还在列表里淡出，过一会儿才真的拿掉 */
+  removing: string | null;
   banner: string;
   /** 打字打到的这一小块在干什么（最近的注释 / 函数 / 选择器），没有就是空串 */
   hint: string;
@@ -70,6 +71,23 @@ function cssHead(sel: string) {
 }
 
 /**
+ * 注释里能当"这一块叫什么"的那部分。
+ *
+ * 生成出来的代码里常有 `/* { margin: 0 } *\/`、`// ---- 分隔 ----` 这类注释，
+ * 原样拿去当标题会变成「正在写『{ margin…』」，等于没说。
+ * 先去掉首尾的装饰符号；剩下仍以代码符号开头或结尾的，多半是注释掉的代码，跳过。
+ */
+function commentText(raw: string) {
+  const text = raw
+    .replace(/^[\s\-=*#/>]+/, "")
+    .replace(/[\s\-=*#/<]+$/, "")
+    .trim();
+  if (text.length < 2) return "";
+  if (/^[{}()[\];,.<>]/.test(text) || /[{}();,<>=]$/.test(text)) return "";
+  return text;
+}
+
+/**
  * 正在打字的这一段属于哪一块代码？
  *
  * 从插入点往回找最近的线索：注释行优先（生成出来的代码基本每块都有注释），
@@ -88,7 +106,10 @@ export function sectionAt(text: string, at: number): string {
 
     // 注释是这一块的名字，用引号括起来，和代码标识区分开
     const comment = COMMENT_LINE.exec(line);
-    if (comment?.[1]) return `「${clip(comment[1], 10)}」`;
+    if (comment?.[1]) {
+      const name = commentText(comment[1]);
+      if (name) return `「${clip(name, 10)}」`;
+    }
 
     const fn = FN_LINE.exec(line);
     if (fn) return `${clip(fn[1], 12)}() 方法`;
@@ -125,17 +146,24 @@ export class Player {
   private pending = "";
   private pendingPath = "";
   private pendingAt = 0;
-  private pendingLen = 0;
   /** 最近算出来的"正在写哪一块"，以及上次算它的时间（打字太快，不节流会一直闪） */
   private hint = "";
   private hintAt = 0;
   private carry = 0;
   private last = 0;
   private waitUntil = 0;
+  /** 正在演"删除"的那个文件：先停在它上面转一眼，到点再从列表里拿掉 */
+  private deleting: string | null = null;
+  private deleteAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   paused = false;
   cps = 45;
+
+  /** 相对默认 60 cps 的节奏倍数：滑杆越慢，动作之间停得越久 */
+  private get pace() {
+    return 60 / Math.max(1, this.cps);
+  }
 
   banner = "准备开始";
   say = "";
@@ -165,7 +193,11 @@ export class Player {
 
   /** 是否还有东西没演完（循环靠它决定要不要等）。 */
   get busy(): boolean {
-    return this.running && !this.finished && (this.pending !== "" || this.cursor < this.steps.length);
+    return (
+      this.running &&
+      !this.finished &&
+      (this.pending !== "" || this.deleting !== null || this.cursor < this.steps.length)
+    );
   }
 
   files(): Record<string, string> {
@@ -184,6 +216,8 @@ export class Player {
     this.pendingAt = 0;
     this.carry = 0;
     this.waitUntil = 0;
+    this.deleting = null;
+    this.deleteAt = 0;
     this.finished = false;
     this.waiting = false;
     this.banner = "准备开始";
@@ -258,6 +292,7 @@ export class Player {
     }
     this.pending = "";
     this.pendingPath = "";
+    this.deleting = null;
     this.finished = true;
     this.emit();
   }
@@ -269,6 +304,8 @@ export class Player {
     this.pendingAt = 0;
     this.carry = 0;
     this.waitUntil = 0;
+    this.deleting = null;
+    this.deleteAt = 0;
     this.finished = false;
     this.paused = false;
     this.start();
@@ -284,15 +321,22 @@ export class Player {
       return;
     }
 
+    // 删除演到点：这时候才真的从缓冲区里拿掉，列表跟着少一行，选中回到第一个
+    if (this.deleting && now >= this.deleteAt) {
+      delete this.buffers[this.deleting];
+      this.deleting = null;
+      this.active = Object.keys(this.buffers)[0] ?? null;
+      this.emit();
+    }
+
     if (now < this.waitUntil) {
       this.timer = setTimeout(this.tick, 16);
       return;
     }
 
     if (this.pending) {
-      // 字速取「滑杆设定」和「这个文件最多敲 MAX_TYPE_SECONDS」里更快的一个
-      const floor = this.pendingLen / MAX_TYPE_SECONDS;
-      const speed = Math.max(this.cps, floor) * (1 + Math.sin(now / 900) * 0.08);
+      // 速度就是滑杆那个数字，加一点呼吸（±8%）让它不像机器人在跑
+      const speed = this.cps * (1 + Math.sin(now / 900) * 0.08);
       this.carry += (speed * dt) / 1000;
       const take = Math.floor(this.carry);
       if (take > 0) {
@@ -305,7 +349,7 @@ export class Player {
         this.buffers[this.pendingPath] = body.slice(0, at) + chunk + body.slice(at);
         this.pendingAt = at + chunk.length;
 
-        if (chunk.endsWith("\n")) this.waitUntil = now + 90;
+        if (chunk.endsWith("\n")) this.waitUntil = now + 90 * this.pace;
       }
       if (!this.pending) this.pendingPath = "";
       this.emit();
@@ -328,7 +372,7 @@ export class Player {
     switch (step.type) {
       case "banner":
         this.banner = step.text;
-        this.waitUntil = now + (step.delay ?? 340);
+        this.waitUntil = now + (step.delay ?? 340) * this.pace;
         break;
 
       case "create":
@@ -336,10 +380,9 @@ export class Player {
         this.active = step.path;
         this.banner = step.banner;
         this.pending = step.code;
-        this.pendingLen = step.code.length;
         this.pendingPath = step.path;
         this.pendingAt = 0;
-        this.waitUntil = now + (step.delay ?? 160);
+        this.waitUntil = now + (step.delay ?? 160) * this.pace;
         break;
 
       case "append": {
@@ -347,7 +390,6 @@ export class Player {
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         this.pending = step.code;
-        this.pendingLen = step.code.length;
         this.pendingPath = step.path;
         this.pendingAt = body.length;
         break;
@@ -358,7 +400,6 @@ export class Player {
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         const idx = body.indexOf(step.find);
-        this.pendingLen = step.replace.length;
         if (idx < 0) {
           // 找不到就接着末尾写，不吞内容
           this.pending = step.replace;
@@ -374,17 +415,20 @@ export class Player {
       }
 
       case "delete":
-        delete this.buffers[step.path];
-        this.active = Object.keys(this.buffers)[0] ?? null;
+        // 先停在要删的那个文件上（左侧高亮、右上角说正在删），过一会儿才真的拿掉，
+        // 拿掉的同一刻选中回到第一个文件——别一上来就跳走，看起来像删错了文件
+        this.active = step.path;
         this.banner = step.banner;
-        this.waitUntil = now + (step.delay ?? 320);
+        this.deleting = step.path;
+        this.deleteAt = now + Math.max(240, 320 * this.pace);
+        this.waitUntil = this.deleteAt;
         break;
 
       case "done":
         this.banner = "完成";
         this.say = step.text;
         this.finished = true;
-        this.waitUntil = now + (step.delay ?? 400);
+        this.waitUntil = now + (step.delay ?? 400) * this.pace;
         this.emit();
         this.onFinish();
         break;
@@ -394,11 +438,13 @@ export class Player {
   }
 
   private emit() {
-    // 提示每 700ms 最多更新一次：跟着光标逐行变，太勤会闪成一片
+    // 提示默认 700ms 最多更新一次：跟着光标逐行变，太勤会闪成一片。
+    // 滑杆越慢，字走得越慢，提示也跟着变慢（按 pace 的平方根收，慢档不至于一动不动）
     const now = performance.now();
+    const every = Math.max(250, 700 * Math.sqrt(this.pace));
     if (!this.pending) {
       this.hint = "";
-    } else if (this.pendingPath && now - this.hintAt > 700) {
+    } else if (this.pendingPath && now - this.hintAt > every) {
       this.hintAt = now;
       this.hint = sectionAt(this.buffers[this.pendingPath] ?? "", this.pendingAt);
     }
@@ -406,6 +452,7 @@ export class Player {
     this.onUpdate({
       buffers: { ...this.buffers },
       active: this.active,
+      removing: this.deleting,
       banner: this.banner,
       hint: this.hint,
       say: this.say,

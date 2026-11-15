@@ -70,6 +70,10 @@ const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 /** 时间线分成两类：对话（用户 / 回话 / 提问 / 拒绝 / 收尾 / 报错）和过程（思考、查看、计划、搜索、写改删） */
 const PROCESS_KINDS = new Set(["think", "look", "plan", "search", "write", "edit", "delete"]);
 
+type Row =
+  | { kind: "item"; item: Item }
+  | { kind: "group"; key: string; items: Item[] };
+
 /** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再看两秒才收 */
 const TOAST_DONE_HOLD = 2000;
 
@@ -93,6 +97,7 @@ function projectDone(items: Item[]): boolean {
 const EMPTY: Snapshot = {
   buffers: {},
   active: null,
+  removing: null,
   banner: "",
   hint: "",
   say: "",
@@ -1094,20 +1099,39 @@ export default function App() {
   const tailLive = running || paused;
 
   /**
-   * 过程全部归到顶部一块，对话按其顺序铺在下面。
+   * 时间线按轮排：用户消息 → 这一轮的过程 → 这一轮的回复。
    *
-   * 思考 / 查看 / 计划 / 写入这些都算过程，无论它是本轮的还是上一轮补进来的，
-   * 都收进同一个块；只有用户消息和回话留在对话里，不再在答复后面另起一个「过程」。
+   * 过程只在本轮内合并成一块（思考和计划排在回复前面，不会掉到最上面去），
+   * 换到下一条用户消息才另起一块——多轮对话里每块都贴着自己那条答复。
    */
   const rows = useMemo(() => {
-    const processes: Item[] = [];
-    const talks: Item[] = [];
+    const out: Row[] = [];
+    let bucket: Item[] = [];
+    const flush = () => {
+      if (!bucket.length) return;
+      out.push({ kind: "group", key: `g${bucket[0].id}`, items: bucket });
+      bucket = [];
+    };
     for (const item of items) {
-      if (PROCESS_KINDS.has(item.kind)) processes.push(item);
-      else talks.push(item);
+      if (PROCESS_KINDS.has(item.kind)) {
+        bucket.push(item);
+        continue;
+      }
+      // 用户又开口了：上一轮剩下的过程先收口
+      flush();
+      out.push({ kind: "item", item });
     }
-    return { processes, talks };
+    flush();
+    return out;
   }, [items]);
+
+  /** 最后一块过程：还在跑的时候，只有它是 live（换文案、转圈、计时） */
+  const lastGroup = useMemo(() => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      if (rows[i].kind === "group") return i;
+    }
+    return -1;
+  }, [rows]);
 
   const ideaHandler = (itemId: number) => (text: string) => {
     markUsed(itemId, text);
@@ -1419,13 +1443,13 @@ export default function App() {
               <button
                 key={f.path}
                 className={`file ${activeFile === f.path ? "on" : ""} ${
-                  writingPath === f.path ? "coding" : ""
-                }`}
+                  writingPath === f.path && snap.removing !== f.path ? "coding" : ""
+                } ${snap.removing === f.path ? "removing" : ""}`}
                 title={f.path}
                 onClick={() => setPeek(f.path)}
               >
                 <span className="file-name">{f.path}</span>
-                {writingPath === f.path && (
+                {writingPath === f.path && snap.removing !== f.path && (
                   <span className="file-coding" aria-label="正在写" title="正在写">
                     <GridLoader dot={3} gap={2} />
                   </span>
@@ -1522,24 +1546,36 @@ export default function App() {
               if (el) logStickRef.current = nearBottom(el);
             }}
           >
-            {(rows.processes.length > 0 || tailLive) && (
+            {rows.map((row, i) =>
+              row.kind === "group" ? (
+                <ProcessGroup
+                  key={row.key}
+                  items={row.items}
+                  live={tailLive && i === lastGroup}
+                  label={liveLabel}
+                  time={runTime}
+                  spinning={running && !paused}
+                />
+              ) : (
+                <TimelineItem
+                  key={row.item.id}
+                  item={row.item}
+                  live={row.item.ev.action === "ask" && pending === row.item.ev.questions}
+                  onIdea={ideaHandler(row.item.id)}
+                />
+              )
+            )}
+
+            {tailLive && rows[rows.length - 1]?.kind !== "group" && (
               <ProcessGroup
-                items={rows.processes}
-                live={tailLive}
+                key="live-group"
+                items={[]}
+                live
                 label={liveLabel}
                 time={runTime}
                 spinning={running && !paused}
               />
             )}
-
-            {rows.talks.map((item) => (
-              <TimelineItem
-                key={item.id}
-                item={item}
-                live={item.ev.action === "ask" && pending === item.ev.questions}
-                onIdea={ideaHandler(item.id)}
-              />
-            ))}
 
             {pending && (
               <div className="ask-card">
@@ -1913,7 +1949,7 @@ function processSummary(items: Item[]) {
  *
  * live 时这一行就是「正在做什么」——loading + 当前动作 + 累计时间，动作一变文字就跟着变；
  * 收起时是一句总结（读了几个文件、改了几处），点开才是每一步。
- * 收起时钉在顶部，对话往下滚也还在。
+ * 它属于哪一轮就长在哪一轮前面，不钉在顶部。
  */
 function ProcessGroup({
   items,
@@ -1933,7 +1969,7 @@ function ProcessGroup({
   const summary = useMemo(() => processSummary(items), [items]);
 
   return (
-    <div className={`tl-group ${open ? "open" : "pinned"} ${live ? "live" : ""}`}>
+    <div className={`tl-group ${open ? "open" : ""} ${live ? "live" : ""}`}>
       <button
         className="tl-group-head"
         onClick={() => hasBody && setOpen((v) => !v)}
