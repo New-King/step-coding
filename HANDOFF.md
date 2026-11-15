@@ -229,9 +229,12 @@ idle → running → (paused | waiting | done)
   flush 成一块，顺序是「用户消息 → 过程 → 回复」；换用户消息才另起一块。
   别把过程全拎到最顶上（多轮时第二块会脱离自己那条答复），也别按「连续一段」切
   （模型在 `say` 之后又发 `plan` 时，回复下面会冒出第二个「过程」）。
-- 还在跑 / 暂停时**最后一块**是 live（`tailLive && i === lastGroup`）：左边 3×3 方块 loading，
-  中间是**当前动作**文案（`liveStatusOf()`），后面跟累计时间，点开才是每一步。
-  别给 `.tl-group` 加 `position: sticky`——钉住会盖住上面几轮。
+- 还在跑 / 暂停时只有**本轮**那块是 live（`liveRow`：最后一条用户消息之后的组）：
+  左边 3×3 方块 loading，中间是**当前动作**文案（`liveStatusOf()`），后面跟累计时间，
+  点开才是每一步。本轮还没有任何过程时（`liveRow < 0`）在末尾补一个空 live 块占位。
+  别用「最后一个 group」当 live：第二轮刚开口时上一轮那块会被当成 live，
+  末尾又补一个空块，屏幕上就出现两条一样的「正在编写 index.html」。
+  也别给 `.tl-group` 加 `position: sticky`——钉住会盖住上面几轮。
 - 发出去到第一个动作回来之间，文案在 `WAITING_WORDS` 里轮着换（思考中 / 正在分析 …），
   否则这一步界面完全不动，看起来像卡死。
 - 跑完这一块收起成**一句总结**（`processSummary()`）：搜索了 2 次 · 读取了 3 个文件 · 编辑了 4 处。
@@ -243,10 +246,20 @@ idle → running → (paused | waiting | done)
 - 这一块只说**文件级**（正在编写 index.html / 正在修改 style.css）；
   写到哪一块交给代码区右上角：`player` 每 700ms 算一次 `hint`（`sectionAt()` 从插入点往回找
   最近的注释 → 函数 / 变量 / 类 → CSS 选择器 → HTML 标签），浮层显示「正在写 xxx」。
-  注意 `sectionAt()` 返回的是**不带前缀**的短语（`.row 的样式` / `save 的逻辑` / `「登录表单」`），
+  注意 `sectionAt()` 返回的是**不带前缀**的短语（`「分数面板」里的文字` / `save() 方法`），
   「正在写」由 `stepLabel` 统一加——两边都加会变成「正在写 正在写 …」。
-  注释要过 `commentText()`：`/* { margin: 0 } *\/` 这种注释掉的代码不当标题（跳过继续往上找），
-  `// ---- 卡片 ----` 去掉装饰符号留「卡片」——否则会出现「正在写『{ margin…』」这种没语义的提示。
+  提示必须是**人话**（2026-11 重写，之前会冒出「正在写 <a>」「正在写 .card」）：
+  - 元素走 `ELEMENT_NAMES` 翻中文（`<a>`→链接、`<label>`→标签、`<style>`→样式）；
+    `<html>/<head>/<body>/<meta>` 这些骨架（`STRUCTURAL_TAGS`）直接跳过，别报。
+  - 再用 `blockAbove()` 补板块：优先最近的注释，其次块级容器。
+    它用闭合标签栈认层级——遇到 `</div>` 记下、遇到对应 `<div>` 划掉；跨出容器之后
+    再往上遇到的注释就不算了，否则「分数面板」会一直粘到后面的 canvas / button 上。
+  - 类名走 `CLASS_WORDS`（`.card`→卡片、`.nav-bar`→导航栏）；翻不出来就退回元素名
+    （`<nav class="top">` 说「导航」，不是「顶部」）。`div`/`section` 这类壳子有注释板块时只报板块名。
+  - 注释过 `commentText()`：`/* { margin: 0 } *\/` 这种注释掉的代码不当标题，
+    `// ---- 卡片 ----` 去掉装饰符号留「卡片」。
+  - 改这些表/正则时用真实文件验证一遍（`node` 直接 import `player.ts` 调 `sectionAt`），
+    别再让 `<a>` 这种漏出来。
   别把细节塞回聊天那一行，也别让 `hint` 逐行刷新——会闪。
 - **新一轮开口先清浮层**（`clearStage()`）：`send()` / `answerAsk()` 在开跑前把 `snap` 的
   `banner / hint / say / total` 清空，否则模型想事情那几秒浮层还顶着上一轮最后一句
@@ -254,7 +267,12 @@ idle → running → (paused | waiting | done)
 - **收尾那句是正文**：`finish`（`pending` 之外）和 `say` 一样渲染成 `.tl.say` 文本，
   不做成可点开的「完成：写好了 xxx」条目；`finish` 仍是 `pending` 时不在列表里出现，
   那一块已经写着「正在写入 x」。
-- 首页「最近」每条在悬停时露出铅笔 / 垃圾桶：铅笔 = `openHistory`，垃圾桶 = 本地记录 + `DELETE /api/session/<id>`。
+- 首页「最近」每条在悬停时露出铅笔 / 垃圾桶：铅笔 = `openHistory`。
+- **删记录要二次确认**（2026-11 改）：点垃圾桶不删，整行换成「删除「标题」？文件也一起清掉」+
+  对勾 / 叉（`confirmId`），点对勾才 `commitDelete()`——先 260ms 淡出（`.record-card.removing`），
+  再调 `removeHistory()`：`localStorage` 里这条记录、当前现场（`SESSION_KEY` 若就是它）、
+  磁盘上的 zip 都不归它管，服务端只删 `DELETE /api/session/<id>`（`var/sessions/<id>` 的对话记录）。
+  早先是点一下直接删，没有回旋余地。
 
 ### 历史续做（2026-11 修过）
 

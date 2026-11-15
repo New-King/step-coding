@@ -480,13 +480,38 @@ button {
   }
 }
 
-/* 正在写的那一行：和右上角步骤浮层同一套方块 loading，只是小一号 */
+/* 正在写的那一行：一支静态铅笔。动效交给代码区和右上角浮层，这里只标"是哪个文件" */
 .file-coding {
   flex: 0 0 13px;
   width: 13px;
   height: 13px;
   display: grid;
   place-items: center;
+  color: var(--faint);
+  animation: coding-in 0.18s var(--ease) both;
+}
+
+.file.on .file-coding {
+  color: var(--muted);
+}
+
+.file-coding svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes coding-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .file:hover {
@@ -2018,6 +2043,54 @@ button {
 .record-icon.danger:hover {
   background: rgba(179, 38, 30, 0.08);
   color: #b3261e;
+}
+
+/* ---- 删除二次确认：整行换成「删除？+ 对勾 / 叉」，不再一下删掉 ---- */
+.record-card.confirming {
+  border-color: rgba(179, 38, 30, 0.22);
+  box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.06);
+}
+
+.record-confirm {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: confirm-in 0.18s var(--ease) both;
+}
+
+.record-confirm-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  animation: confirm-in 0.18s var(--ease) both;
+}
+
+@keyframes confirm-in {
+  from {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 确认后整行淡出，260ms 后才真的从列表里拿掉 */
+.record-card.removing {
+  animation: record-remove 0.26s var(--ease) forwards;
+  pointer-events: none;
+}
+
+@keyframes record-remove {
+  to {
+    opacity: 0;
+    transform: translateX(10px);
+  }
 }
 
 @media (hover: none) {

@@ -46,8 +46,24 @@ const COMMENT_LINE = /^(?:\/\/|#|--|\/\*|\*|<!--)\s*(.+?)\s*(?:\*\/|-->)?$/;
 const FN_LINE = /^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)/;
 const HANDLE_LINE = /^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?(?:function\b|\()/;
 const CLASS_LINE = /^(?:export\s+)?(?:class|interface|struct|type)\s+([\w$]+)/;
-const CSS_LINE = /^([.#][\w-][^{]*)\{/;
 const TAG_LINE = /^<([a-z][\w-]*)([^>]*)>/;
+const CLOSE_TAG = /^<\/([a-z][\w-]*)/;
+/** 这些标签只是页面骨架，说了也不说明在干嘛，跳过 */
+const STRUCTURAL_TAGS = new Set(["html", "head", "body", "meta", "link", "title", "base"]);
+/**
+ * 样式规则的行首。
+ *
+ * 除了 `.card` / `#app`，也认 `body {` 这种元素选择器——但有白名单，
+ * 否则 JS 里的 `if (x) {`、`for (...) {` 会被当成样式规则。
+ */
+const CSS_LINE = new RegExp(
+  `^([.#][\\w-][^{]*|(?:${[
+    "html", "body", "main", "header", "footer", "nav", "section", "article", "aside",
+    "div", "form", "label", "input", "textarea", "select", "option", "button", "a",
+    "ul", "ol", "li", "table", "tr", "td", "th", "img", "canvas", "svg", "h1", "h2",
+    "h3", "h4", "p", "span", "style", "script",
+  ].join("|")}))\\s*\\{`
+);
 
 function clip(text: string, max = HINT_MAX) {
   if (text.length <= max) return text;
@@ -55,13 +71,63 @@ function clip(text: string, max = HINT_MAX) {
   return `${text.slice(0, max).replace(/[，。；、,.;:：\s]+$/, "")}…`;
 }
 
-/** `<div class="card">` → `div.card`，`<section id="login">` → `section#login` */
-function tagLabel(tag: string, attrs: string) {
-  const id = /id="([^"]+)"/.exec(attrs)?.[1]?.trim();
-  if (id) return `${tag}#${id}`;
-  const cls = /class="([^"]+)"/.exec(attrs)?.[1]?.trim().split(/\s+/)[0];
-  if (cls) return `${tag}.${cls}`;
-  return `<${tag}>`;
+/** 块级容器：它们包着的内容算同一个板块（导航、登录表单、卡片…） */
+const CONTAINER_TAGS = new Set([
+  "html", "body", "header", "footer", "nav", "main", "section", "article", "aside",
+  "div", "form", "fieldset", "table", "thead", "tbody", "ul", "ol", "dl", "dialog", "figure",
+]);
+
+/**
+ * 元素说人话。
+ *
+ * 浮层不能出现「正在写 <a>」「正在写 <style>」——用户不知道那是干什么的。
+ * 这里把标签翻成中文名，再用所属板块拼起来：「正在写导航里的链接」。
+ */
+const ELEMENT_NAMES: Record<string, string> = {
+  body: "页面", div: "容器", section: "区块", header: "页头", footer: "页脚", nav: "导航",
+  main: "主区域", aside: "侧栏", article: "文章块", form: "表单", fieldset: "表单组",
+  label: "标签", input: "输入框", textarea: "文本域", select: "下拉框", option: "选项",
+  button: "按钮", a: "链接", ul: "列表", ol: "列表", li: "列表项", dl: "说明列表",
+  table: "表格", thead: "表头", tbody: "表格主体", tr: "表格行", td: "单元格", th: "表头格",
+  img: "图片", svg: "图标", canvas: "画布", video: "视频", audio: "音频",
+  h1: "大标题", h2: "标题", h3: "小标题", h4: "小标题", p: "段落", span: "文字",
+  strong: "强调文字", em: "强调文字",
+  style: "样式", script: "脚本", link: "外部资源", meta: "页面信息", title: "页面标题",
+};
+
+/** 常见类名词 → 中文：`.card` 说成「卡片」，比「.card 的样式」像人话 */
+const CLASS_WORDS: Record<string, string> = {
+  card: "卡片", header: "页头", footer: "页脚", nav: "导航", navbar: "导航",
+  form: "表单", input: "输入框", button: "按钮", btn: "按钮", list: "列表",
+  item: "条目", items: "条目", title: "标题", text: "文字", modal: "弹窗",
+  dialog: "弹窗", sidebar: "侧栏", container: "容器", wrapper: "容器", wrap: "容器",
+  row: "行", col: "列", column: "列", avatar: "头像", badge: "徽标", tab: "标签页",
+  menu: "菜单", dropdown: "下拉", toast: "提示", alert: "警告", hero: "首屏",
+  banner: "横幅", logo: "标志", icon: "图标", loading: "加载提示", spinner: "加载提示",
+  table: "表格", grid: "网格", panel: "面板", toolbar: "工具栏", search: "搜索框",
+  login: "登录", signup: "注册", profile: "个人资料", chat: "对话", message: "消息",
+  game: "游戏", canvas: "画布", score: "分数", board: "面板", cell: "格子",
+  bar: "栏", top: "顶部", bottom: "底部", content: "内容", info: "信息",
+  desc: "说明", field: "字段", group: "分组", actions: "操作区", progress: "进度",
+  label: "标签", tags: "标签", value: "数值", status: "状态", empty: "空状态",
+};
+
+/** 这些标签自己说不出用途，板块名要靠类名 */
+const GENERIC_TAGS = new Set(["div", "section", "article", "aside", "main", "span"]);
+
+const CHINESE = /^[\u4e00-\u9fa5]+$/;
+
+/**
+ * 类名说人话：`.login-card` → 「登录 卡片」，`.card` → 「卡片」。
+ * 认不出来的词原样保留（宁可中英混排，也不要瞎翻）。
+ */
+function classWords(name: string) {
+  const parts = name
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => CLASS_WORDS[w.toLowerCase()] ?? w);
+  if (!parts.length) return name;
+  return parts.every((p) => CHINESE.test(p)) ? parts.join("") : parts.join(" ");
 }
 
 /** `.row input[type="text"]` → `.row`：只说这条规则管哪一块，别把整串选择器塞进浮层 */
@@ -87,14 +153,79 @@ function commentText(raw: string) {
   return text;
 }
 
+/** 往上找最近的注释：它就是这一块的名字（生成出来的代码基本每块都有注释） */
+function commentAbove(lines: string[], start: number, from: number) {
+  for (let i = start - 1; i >= from; i -= 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const comment = COMMENT_LINE.exec(line);
+    if (!comment?.[1]) continue;
+    const name = commentText(comment[1]);
+    if (name) return `「${clip(name, 10)}」`;
+  }
+  return "";
+}
+
 /**
- * 正在打字的这一段属于哪一块代码？
+ * 这一段属于哪个板块：往上找最近的注释或块级容器。
  *
- * 从插入点往回找最近的线索：注释行优先（生成出来的代码基本每块都有注释），
- * 其次函数 / 变量 / 类 / CSS 选择器 / HTML 标签。找不到就返回空串，退回整步的标题。
+ * 要认层级：往回扫时先记下遇到的 `</div>`，遇到对应的 `<div>` 就把它划掉——
+ * 已经闭合的容器不算，注释也只在还没跨出任何闭合标签时才算。
+ * 否则「分数面板」那条注释会一直粘到后面的 canvas / button 上（它们其实在 main 里）。
+ */
+function blockAbove(lines: string[], start: number, from: number) {
+  const closed = new Set<string>();
+  /** 已经跨出过一层容器：更上面的注释就不属于这里了 */
+  let crossed = false;
+  let container = "";
+
+  for (let i = start - 1; i >= from; i -= 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const close = CLOSE_TAG.exec(line);
+    if (close) {
+      closed.add(close[1]);
+      continue;
+    }
+
+    const tag = TAG_LINE.exec(line);
+    if (tag) {
+      if (STRUCTURAL_TAGS.has(tag[1])) continue;
+      if (closed.has(tag[1])) {
+        // 这是上面某个容器的结束标签，跨出去了
+        closed.delete(tag[1]);
+        crossed = true;
+        continue;
+      }
+      if (closed.size > 0 || !CONTAINER_TAGS.has(tag[1]) || container) continue;
+      // div / section 这类本身不说明用途，用类名（div.card → 卡片）；
+      // nav / header / form 本身就有名字，别被 class="top" 抢走（否则变成「顶部里的链接」）
+      const cls = /class="([^"]+)"/.exec(tag[2])?.[1]?.trim().split(/\s+/)[0];
+      const named = cls ? classWords(cls) : "";
+      if (GENERIC_TAGS.has(tag[1]) && named && CHINESE.test(named)) container = named;
+      else container = ELEMENT_NAMES[tag[1]] ?? tag[1];
+      continue;
+    }
+
+    if (crossed) continue;
+    const comment = COMMENT_LINE.exec(line);
+    const name = comment?.[1] ? commentText(comment[1]) : "";
+    // 注释比容器更近、且还没跨出容器，才算这一块的名字
+    if (name) return `「${clip(name, 10)}」`;
+  }
+  return container;
+}
+
+/**
+ * 正在打字的这一段是干什么的？
  *
- * 返回的是"这一块叫什么"（`save 的逻辑`、`「登录表单」`），不带"正在写"——
- * 前缀由界面拼，别两边都加，会变成「正在写 正在写 …」。
+ * 规则：先看最靠近光标的动作线索（注释 / 函数 / 类 / 样式选择器 / 标签），
+ * 再补一句它属于哪个板块——注释优先，其次外层容器。
+ * 于是输出是「「登录表单」里的标签」「导航里的链接」「login-card 的样式」，
+ * 而不是「<label>」「<a>」「.card」这种只有程序看得懂的东西。
+ *
+ * 返回的是短语，不带"正在写"——前缀由界面拼，两边都加会变成「正在写 正在写 …」。
  */
 export function sectionAt(text: string, at: number): string {
   const lines = text.slice(0, at).split("\n");
@@ -104,13 +235,14 @@ export function sectionAt(text: string, at: number): string {
     const line = lines[i].trim();
     if (!line) continue;
 
-    // 注释是这一块的名字，用引号括起来，和代码标识区分开
+    // 正好在写某条注释：它就是这块的名字，用引号括起来
     const comment = COMMENT_LINE.exec(line);
     if (comment?.[1]) {
       const name = commentText(comment[1]);
       if (name) return `「${clip(name, 10)}」`;
     }
 
+    // 函数 / 类 / 变量：说明在实现哪个功能
     const fn = FN_LINE.exec(line);
     if (fn) return `${clip(fn[1], 12)}() 方法`;
 
@@ -120,11 +252,30 @@ export function sectionAt(text: string, at: number): string {
     const cls = CLASS_LINE.exec(line);
     if (cls) return `${clip(cls[1], 12)} 类`;
 
+    // 样式：说清是谁的样式，别只丢一个类名
     const css = CSS_LINE.exec(line);
-    if (css) return `${cssHead(css[1])} 的样式`;
+    if (css) {
+      const named = commentAbove(lines, i, from);
+      if (named) return `${named}的样式`;
+      const head = clip(classWords(cssHead(css[1]).replace(/^[.#]/, "")), 12);
+      // 中文尾巴不留空格（「卡片的样式」），英文名后面留一个（「body 的样式」）
+      return CHINESE.test(head.slice(-1)) ? `${head}的样式` : `${head} 的样式`;
+    }
 
+    // 标签：中文名词 + 所属板块
     const tag = TAG_LINE.exec(line);
-    if (tag) return tagLabel(tag[1], tag[2]);
+    if (tag) {
+      // <html> / <meta> 这类只是骨架，说不清在干嘛，继续往上找
+      if (STRUCTURAL_TAGS.has(tag[1])) continue;
+      const name = ELEMENT_NAMES[tag[1]] ?? tag[1];
+      // <style> / <script> 本身就说明了在写什么，不用再套板块
+      if (name === "样式" || name === "脚本") return name;
+      const block = blockAbove(lines, i, from);
+      // div / section 这类只是壳子，板块名（带引号的注释）已经够说明问题了
+      if (GENERIC_TAGS.has(tag[1]) && block.startsWith("「")) return block;
+      if (block && block !== name) return `${block}里的${name}`;
+      return name;
+    }
   }
   return "";
 }

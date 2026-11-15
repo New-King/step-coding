@@ -190,6 +190,9 @@ export default function App() {
   });
   const [copied, setCopied] = useState(false);
   const [peek, setPeek] = useState<string | null>(null);
+  /** 「最近」里正在等二次确认的那条：点垃圾桶先变出对勾 / 叉，别一下就删 */
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [traceQuery, setTraceQuery] = useState("");
   const [traceOpen, setTraceOpen] = useState(
     () => new URLSearchParams(window.location.search).get("trace") === "1"
@@ -1058,6 +1061,16 @@ export default function App() {
     }
   };
 
+  /** 二次确认后真的删：先让这行淡出，再从「最近」里拿掉，免得点完啪一下没了 */
+  const commitDelete = (item: HistoryItem) => {
+    setConfirmId(null);
+    setRemovingId(item.id);
+    window.setTimeout(() => {
+      setRemovingId(null);
+      void removeHistory(item);
+    }, 260);
+  };
+
   /* ------------------------------------------------------------ 展示 */
 
   const firstUserItem = itemsRef.current.find(
@@ -1132,6 +1145,26 @@ export default function App() {
     }
     return -1;
   }, [rows]);
+
+  /**
+   * live 的到底是哪一块。
+   *
+   * 只有「最后一条用户消息之后」的过程块才算本轮——否则第二轮刚开口、还没有任何动作时，
+   * 上一轮那块会被当成 live，同时末尾再补一个空的 live 行，屏幕上就出现两条一样的
+   * 「正在编写 index.html」。没有本轮过程时返回 -1，由末尾那个空块占位。
+   */
+  const liveRow = useMemo(() => {
+    if (!tailLive || lastGroup < 0) return -1;
+    let lastUser = -1;
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const row = rows[i];
+      if (row.kind === "item" && row.item.ev.action === "user") {
+        lastUser = i;
+        break;
+      }
+    }
+    return lastGroup > lastUser ? lastGroup : -1;
+  }, [rows, lastGroup, tailLive]);
 
   const ideaHandler = (itemId: number) => (text: string) => {
     markUsed(itemId, text);
@@ -1336,40 +1369,79 @@ export default function App() {
                 </div>
                 <div className="history-list">
                   {history.map((item) => (
-                    <div key={item.id} className="record-card">
-                      <button
-                        className="record-body record-open"
-                        onClick={() => void openHistory(item)}
-                      >
-                        <span className="record-title">
-                          {projectDone(item.items) ? "已完成" : "未完成"}
-                        </span>
-                        <span className="record-text">{item.title || "最近一次"}</span>
-                      </button>
-                      <div className="record-actions">
-                        <button
-                          className="record-icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void openHistory(item);
-                          }}
-                          title="继续修改"
-                          aria-label="继续修改"
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          className="record-icon danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void removeHistory(item);
-                          }}
-                          title="删除"
-                          aria-label="删除"
-                        >
-                          <TrashIcon />
-                        </button>
-                      </div>
+                    <div
+                      key={item.id}
+                      className={`record-card ${confirmId === item.id ? "confirming" : ""} ${
+                        removingId === item.id ? "removing" : ""
+                      }`}
+                    >
+                      {confirmId === item.id ? (
+                        <>
+                          <span className="record-confirm">
+                            删除「{item.title || "这条记录"}」？文件也一起清掉
+                          </span>
+                          <div className="record-confirm-actions">
+                            <button
+                              className="record-icon danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                commitDelete(item);
+                              }}
+                              title="确认删除"
+                              aria-label="确认删除"
+                            >
+                              <CheckIcon />
+                            </button>
+                            <button
+                              className="record-icon"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmId(null);
+                              }}
+                              title="取消"
+                              aria-label="取消删除"
+                            >
+                              <XIcon />
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="record-body record-open"
+                            onClick={() => void openHistory(item)}
+                          >
+                            <span className="record-title">
+                              {projectDone(item.items) ? "已完成" : "未完成"}
+                            </span>
+                            <span className="record-text">{item.title || "最近一次"}</span>
+                          </button>
+                          <div className="record-actions">
+                            <button
+                              className="record-icon"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openHistory(item);
+                              }}
+                              title="继续修改"
+                              aria-label="继续修改"
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              className="record-icon danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmId(item.id);
+                              }}
+                              title="删除"
+                              aria-label="删除"
+                            >
+                              <TrashIcon />
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1450,8 +1522,8 @@ export default function App() {
               >
                 <span className="file-name">{f.path}</span>
                 {writingPath === f.path && snap.removing !== f.path && (
-                  <span className="file-coding" aria-label="正在写" title="正在写">
-                    <GridLoader dot={3} gap={2} />
+                  <span className="file-coding" title="正在写" aria-label="正在写">
+                    <PencilIcon />
                   </span>
                 )}
               </button>
@@ -1551,7 +1623,7 @@ export default function App() {
                 <ProcessGroup
                   key={row.key}
                   items={row.items}
-                  live={tailLive && i === lastGroup}
+                  live={i === liveRow}
                   label={liveLabel}
                   time={runTime}
                   spinning={running && !paused}
@@ -1566,7 +1638,7 @@ export default function App() {
               )
             )}
 
-            {tailLive && rows[rows.length - 1]?.kind !== "group" && (
+            {liveRow < 0 && tailLive && (
               <ProcessGroup
                 key="live-group"
                 items={[]}
@@ -1878,6 +1950,22 @@ function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
       <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M5 12.5L10 17.5L19 7" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   );
 }
