@@ -70,10 +70,6 @@ const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 /** 时间线分成两类：对话（用户 / 回话 / 提问 / 拒绝 / 收尾 / 报错）和过程（思考、查看、计划、搜索、写改删） */
 const PROCESS_KINDS = new Set(["think", "look", "plan", "search", "write", "edit", "delete"]);
 
-type Row =
-  | { kind: "item"; item: Item }
-  | { kind: "group"; key: string; items: Item[] };
-
 /** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再看两秒才收 */
 const TOAST_DONE_HOLD = 2000;
 
@@ -1068,37 +1064,24 @@ export default function App() {
       ? `正在编写 ${snap.active}`
       : liveStatusOf(items, pending, askIndex, running, paused);
   const runTime = runStartRef.current ? elapsedText(elapsed) : "";
-  /** 还在跑（或暂停着）：时间线末尾那一行是「正在做的事」，而不是「过程 · N 步」 */
+  /** 还在跑（或暂停着）：过程块那行说的是「正在做的事」，而不是「过程 · N 步」 */
   const tailLive = running || paused;
 
-  /** 时间线按「对话 / 过程」切段：过程连着的一段收成一块，默认不展开 */
-  const rows = useMemo(() => {
-    const out: Row[] = [];
-    for (const item of items) {
-      if (!PROCESS_KINDS.has(item.kind)) {
-        out.push({ kind: "item", item });
-        continue;
-      }
-      const last = out[out.length - 1];
-      if (last && last.kind === "group") last.items.push(item);
-      else out.push({ kind: "group", key: `g${item.id}`, items: [item] });
-    }
-    return out;
-  }, [items]);
-
   /**
-   * 最后一行「看得见」的在哪：收尾中那条 finish 自己渲染成空，
-   * 不跳过它的话，状态行会单独多出一行，和过程块分成两截。
+   * 过程全部归到顶部一块，对话按其顺序铺在下面。
+   *
+   * 思考 / 查看 / 计划 / 写入这些都算过程，无论它是本轮的还是上一轮补进来的，
+   * 都收进同一个块；只有用户消息和回话留在对话里，不再在答复后面另起一个「过程」。
    */
-  const lastVisible = useMemo(() => {
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const row = rows[i];
-      if (row.kind === "group") return i;
-      if (row.item.ev.action === "finish" && row.item.pending) continue;
-      return i;
+  const rows = useMemo(() => {
+    const processes: Item[] = [];
+    const talks: Item[] = [];
+    for (const item of items) {
+      if (PROCESS_KINDS.has(item.kind)) processes.push(item);
+      else talks.push(item);
     }
-    return -1;
-  }, [rows]);
+    return { processes, talks };
+  }, [items]);
 
   const ideaHandler = (itemId: number) => (text: string) => {
     markUsed(itemId, text);
@@ -1513,36 +1496,24 @@ export default function App() {
               if (el) logStickRef.current = nearBottom(el);
             }}
           >
-            {rows.map((row, i) =>
-              row.kind === "group" ? (
-                <ProcessGroup
-                  key={i === lastVisible && tailLive ? "live-group" : row.key}
-                  items={row.items}
-                  live={i === lastVisible && tailLive}
-                  label={liveLabel}
-                  time={runTime}
-                  spinning={running && !paused}
-                />
-              ) : (
-                <TimelineItem
-                  key={row.item.id}
-                  item={row.item}
-                  live={row.item.ev.action === "ask" && pending === row.item.ev.questions}
-                  onIdea={ideaHandler(row.item.id)}
-                />
-              )
-            )}
-
-            {tailLive && (lastVisible < 0 || rows[lastVisible].kind !== "group") && (
+            {(rows.processes.length > 0 || tailLive) && (
               <ProcessGroup
-                key="live-group"
-                items={[]}
-                live
+                items={rows.processes}
+                live={tailLive}
                 label={liveLabel}
                 time={runTime}
                 spinning={running && !paused}
               />
             )}
+
+            {rows.talks.map((item) => (
+              <TimelineItem
+                key={item.id}
+                item={item}
+                live={item.ev.action === "ask" && pending === item.ev.questions}
+                onIdea={ideaHandler(item.id)}
+              />
+            ))}
 
             {pending && (
               <div className="ask-card">
@@ -1863,10 +1834,11 @@ function countLines(files: Record<string, string>) {
 }
 
 /**
- * 连着的一段过程收成一块：默认收起，点开才看每一步。
+ * 整个过程收成对话顶部的一块：默认收起，点开才看每一步。
  *
  * live 时这一行就是「正在做什么」——loading + 当前动作 + 累计时间，动作一变文字就跟着变；
  * 点开则是这一段的每一步（思考 / 查看 / 写入…），每一步还能再展开看详情。
+ * 收起时钉在顶部，对话往下滚也还在。
  */
 function ProcessGroup({
   items,
@@ -1885,7 +1857,7 @@ function ProcessGroup({
   const hasBody = items.length > 0;
 
   return (
-    <div className={`tl-group ${open ? "open" : ""} ${live ? "live" : ""}`}>
+    <div className={`tl-group ${open ? "open" : "pinned"} ${live ? "live" : ""}`}>
       <button
         className="tl-group-head"
         onClick={() => hasBody && setOpen((v) => !v)}
@@ -1935,20 +1907,20 @@ function TimelineItem({
     );
   }
 
-  // 回话是给用户看的正文，直接铺开，别缩成一行摘要
-  if (ev.action === "say") {
-    return <div className="tl say">{ev.text}</div>;
+  // finish 还挂着"正在收尾"时，过程块那行已经在说，别在列表里再重复一条
+  if (ev.action === "finish" && item.pending) return null;
+
+  // 回话和收尾那句都是给用户看的正文，直接铺开，不缩成可点开的摘要
+  if (ev.action === "say" || ev.action === "finish") {
+    return <div className="tl say">{ev.text || "完成"}</div>;
   }
 
   // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
   if (ev.action === "ask" && live) return null;
 
-  // finish 还挂着"正在收尾"时，顶部状态行已经在说，别在列表里再重复一条
-  if (ev.action === "finish" && item.pending) return null;
-
   const kind = kindOf(ev.action);
-  const summary = summaryOf(ev, item.pending);
-  const detail = detailOf(ev, item.pending, picked, onIdea);
+  const summary = summaryOf(ev);
+  const detail = detailOf(ev, picked, onIdea);
   const expandable = detail !== null;
 
   return (
@@ -1981,14 +1953,13 @@ function kindOf(action: Event["action"]): string {
     edit: "",
     delete: "",
     decline: "拒绝",
-    finish: "完成",
     error: "出错",
     user: "你",
   };
   return map[action] ?? "";
 }
 
-function summaryOf(ev: Event, pending?: boolean): ReactNode {
+function summaryOf(ev: Event): ReactNode {
   switch (ev.action) {
     case "think":
       return <span className="tl-summary-text">{ev.text || "…"}</span>;
@@ -2023,12 +1994,7 @@ function summaryOf(ev: Event, pending?: boolean): ReactNode {
         </>
       );
     case "decline":
-    case "finish":
-      return (
-        <span className="tl-summary-text">
-          {pending ? "正在收尾…" : ev.text || "完成"}
-        </span>
-      );
+      return <span className="tl-summary-text">{ev.text}</span>;
     case "error":
       return <span className="tl-summary-text">{ev.text}</span>;
     case "user":
@@ -2040,7 +2006,6 @@ function summaryOf(ev: Event, pending?: boolean): ReactNode {
 
 function detailOf(
   ev: Event,
-  pending: boolean | undefined,
   picked: string | undefined,
   onIdea?: (text: string) => void
 ): ReactNode | null {
@@ -2118,9 +2083,6 @@ function detailOf(
     case "delete":
     case "look":
       return null;
-
-    case "finish":
-      return !pending && ev.text ? <div className="tl-text">{ev.text}</div> : null;
 
     case "decline":
       return (

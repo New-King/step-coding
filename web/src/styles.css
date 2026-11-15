@@ -2135,12 +2135,20 @@ button {
   border: 1.5px solid var(--faint);
 }
 
-/* ---- 过程块：连着的思考 / 查看 / 写入收成一条，默认收起 ---- */
+/* ---- 过程块：全部思考 / 查看 / 写入收成一条，放在对话顶部，默认收起 ---- */
 .tl-group {
   align-self: stretch;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* 收起时钉在顶部：只是一行，对话往下滚它也还在 */
+.tl-group.pinned {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card);
 }
 
 .tl-group-head {

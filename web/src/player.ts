@@ -46,12 +46,21 @@ const FN_LINE = /^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)/;
 const HANDLE_LINE = /^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?(?:function\b|\()/;
 const CLASS_LINE = /^(?:export\s+)?(?:class|interface|struct|type)\s+([\w$]+)/;
 const CSS_LINE = /^([.#][\w-][^{]*)\{/;
-const TAG_LINE = /^<([a-z][\w-]*)/;
+const TAG_LINE = /^<([a-z][\w-]*)([^>]*)>/;
 
-function clip(text: string) {
-  if (text.length <= HINT_MAX) return text;
+function clip(text: string, max = HINT_MAX) {
+  if (text.length <= max) return text;
   // 截断处别留半句标点
-  return `${text.slice(0, HINT_MAX).replace(/[，。；、,.;:：\s]+$/, "")}…`;
+  return `${text.slice(0, max).replace(/[，。；、,.;:：\s]+$/, "")}…`;
+}
+
+/** `<div class="card">` → `div.card`，`<section id="login">` → `section#login` */
+function tagLabel(tag: string, attrs: string) {
+  const id = /id="([^"]+)"/.exec(attrs)?.[1]?.trim();
+  if (id) return `${tag}#${id}`;
+  const cls = /class="([^"]+)"/.exec(attrs)?.[1]?.trim().split(/\s+/)[0];
+  if (cls) return `${tag}.${cls}`;
+  return `<${tag}>`;
 }
 
 /**
@@ -68,23 +77,24 @@ export function sectionAt(text: string, at: number): string {
     const line = lines[i].trim();
     if (!line) continue;
 
+    // 注释是这一块的名字，用引号括起来，和代码标识区分开
     const comment = COMMENT_LINE.exec(line);
-    if (comment?.[1]) return clip(comment[1]);
+    if (comment?.[1]) return `正在写「${clip(comment[1], 10)}」`;
 
     const fn = FN_LINE.exec(line);
-    if (fn) return clip(`${fn[1]}()`);
+    if (fn) return `正在写 ${clip(fn[1], 12)}() 方法`;
 
     const handle = HANDLE_LINE.exec(line);
-    if (handle) return clip(`${handle[1]}()`);
+    if (handle) return `正在写 ${clip(handle[1], 12)} 的逻辑`;
 
     const cls = CLASS_LINE.exec(line);
-    if (cls) return clip(cls[1]);
+    if (cls) return `正在写 ${clip(cls[1], 12)} 类`;
 
     const css = CSS_LINE.exec(line);
-    if (css) return clip(css[1].trim());
+    if (css) return `正在写 ${clip(css[1].trim(), 12)} 样式`;
 
     const tag = TAG_LINE.exec(line);
-    if (tag) return clip(`<${tag[1]}>`);
+    if (tag) return `正在写 ${tagLabel(tag[1], tag[2])}`;
   }
   return "";
 }
