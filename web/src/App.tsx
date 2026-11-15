@@ -46,21 +46,12 @@ type Item = {
   pending?: boolean;
 };
 
-/** 服务端的 messages 里有 tool_calls 等嵌套结构，前端只负责原样存回。 */
-type ChatMessage = { role: string; content?: string; tool_calls?: unknown[] };
-
+/** 本地留的现场：刷新后能把这一场重新塞回「最近」所需的最小信息 */
 type SavedSession = {
   id: string;
   items: Item[];
   files: Record<string, string>;
-  messages: ChatMessage[];
   round: number;
-  pending: { question: string; options: string[] }[] | null;
-  askIndex: number;
-  askAnswers: string[];
-  status: "running" | "paused" | "waiting" | "done";
-  started: boolean;
-  savedAt: number;
 };
 
 type HistoryItem = {
@@ -91,18 +82,6 @@ function projectDone(items: Item[]): boolean {
     if (TERMINAL_KINDS.has(item.kind)) lastTerminal = i;
   });
   return lastTerminal > lastUser;
-}
-
-/**
- * 这次现场是不是正常收尾了。
- *
- * 只看 status 不够：旧版本在 say / decline / 无文件的 finish 之后没有落盘状态，
- * 会留下 "running"。所以再看时间线里最后一次收尾动作是否在最后一句用户消息之后。
- */
-function endedNormally(saved: SavedSession): boolean {
-  if (saved.status === "done") return true;
-  if (saved.pending?.length) return false;
-  return projectDone(saved.items);
 }
 
 const EMPTY: Snapshot = {
@@ -173,7 +152,6 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [started, setStarted] = useState(false);
-  const [resumable, setResumable] = useState<SavedSession | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     try {
       const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
@@ -210,7 +188,6 @@ export default function App() {
   /** 步骤浮层收尾：方块停转、画个勾，停 2 秒再收起 */
   const [toastDone, setToastDone] = useState(false);
 
-  const messagesRef = useRef<ChatMessage[]>([]);
   const filesRef = useRef<Record<string, string>>({});
   const startFilesRef = useRef<Record<string, string>>({});
   const serverFilesRef = useRef<Record<string, string>>({});
@@ -246,17 +223,10 @@ export default function App() {
     id: sessionIdRef.current,
     items: itemsRef.current,
     files: filesRef.current,
-    messages: messagesRef.current,
     round: seqRef.current,
-    pending,
-    askIndex,
-    askAnswers,
-    status: statusRef.current === "idle" ? "done" : statusRef.current,
-    started,
-    savedAt: Date.now(),
   });
 
-  /** 把现场存下来：刷新/返回后能接着干。 */
+  /** 把现场存下来：刷新后还能在「最近」里找回这一场。 */
   const saveSession = () => {
     if (!sessionIdRef.current) return;
     try {
@@ -343,9 +313,19 @@ export default function App() {
       const raw = localStorage.getItem(SESSION_KEY);
       const saved = raw ? (JSON.parse(raw) as SavedSession) : null;
       if (saved && Array.isArray(saved.items) && saved.items.length > 0) {
-        // 正常收尾的现场不弹「上次没做完」，也不该点一下就自动再发一轮
-        if (!endedNormally(saved)) setResumable(saved);
         hasSaved = true;
+        // 没做完的现场也进「最近」：只剩一份列表，不再单独挂一张卡
+        if (!projectDone(saved.items)) {
+          const firstUser = saved.items.find((i) => i.ev.action === "user");
+          upsertHistory({
+            id: saved.id,
+            title: firstUser?.ev.action === "user" ? titleOf(firstUser.ev.text) : "一个项目",
+            items: saved.items,
+            files: saved.files ?? {},
+            base: {},
+            round: saved.round ?? 0,
+          });
+        }
       }
     } catch {
       /* 读不出来就算了 */
@@ -434,7 +414,6 @@ export default function App() {
     pendingMessageRef.current = value;
     sessionIdRef.current = `s-${Date.now()}`;
     seqRef.current = 0;
-    messagesRef.current = [];
     setSnap(EMPTY);
     setAskIndex(0);
     setAskAnswers([]);
@@ -701,31 +680,18 @@ export default function App() {
     void text;
   };
 
-  const remember = (files: Record<string, string>) => {
-    const firstUser = itemsRef.current.find(
-      (i) => i.kind === "user" && i.ev.action === "user"
-    );
-    const title =
-      firstUser && firstUser.ev.action === "user" ? titleOf(firstUser.ev.text) : "新项目";
-    const item: HistoryItem = {
-      id: "",
-      title,
-      summary: summarize(files),
-      items: itemsRef.current,
-      base: startFilesRef.current,
-      files,
-      round: seqRef.current,
-    };
-    // 一次操作 = 一个项目：按会话 id 认，增删文件都还是同一条
-    const sid = sessionIdRef.current || `s-${Date.now()}`;
-    sessionIdRef.current = sid;
-
+  /** 写进「最近」：一个会话只占一条，改动过的排到最前 */
+  const upsertHistory = (entry: Omit<HistoryItem, "summary" | "updatedAt">) => {
     setHistory((prev) => {
-      const same = prev.findIndex((x) => x.id === sid);
-      const merged =
-        same >= 0
-          ? { ...item, id: sid, title: prev[same].title || item.title, updatedAt: Date.now() }
-          : { ...item, id: sid, updatedAt: Date.now() };
+      const same = prev.findIndex((x) => x.id === entry.id);
+      // 没有新动作就别动它：只是打开看一眼，不该跳到最前面
+      if (same >= 0 && prev[same].items.length === entry.items.length) return prev;
+      const merged: HistoryItem = {
+        ...entry,
+        summary: summarize(entry.files),
+        title: (same >= 0 ? prev[same].title : "") || entry.title,
+        updatedAt: Date.now(),
+      };
       const rest = prev.filter((_, i) => i !== same);
       let next = [merged, ...rest].slice(0, 6);
 
@@ -739,6 +705,23 @@ export default function App() {
         }
       }
       return next;
+    });
+  };
+
+  const remember = (files: Record<string, string>) => {
+    const firstUser = itemsRef.current.find(
+      (i) => i.kind === "user" && i.ev.action === "user"
+    );
+    // 一次操作 = 一个项目：按会话 id 认，增删文件都还是同一条
+    const sid = sessionIdRef.current || `s-${Date.now()}`;
+    sessionIdRef.current = sid;
+    upsertHistory({
+      id: sid,
+      title: firstUser && firstUser.ev.action === "user" ? titleOf(firstUser.ev.text) : "新项目",
+      items: itemsRef.current,
+      base: startFilesRef.current,
+      files,
+      round: seqRef.current,
     });
   };
 
@@ -813,72 +796,6 @@ export default function App() {
     await pump();
   };
 
-  /** 从上次的现场接着干 */
-  const resume = async () => {
-    const saved = resumable;
-    if (!saved) return;
-
-    setStarted(true);
-    setResumable(null);
-    runStartRef.current = 0;
-    setElapsed(0);
-    sessionIdRef.current = saved.id;
-    itemsRef.current = saved.items;
-    setItems(saved.items);
-    filesRef.current = saved.files;
-    messagesRef.current = saved.messages ?? [];
-    seqRef.current = saved.round ?? 0;
-    idRef.current = saved.items.reduce((m, i) => Math.max(m, i.id), 0);
-    setError(null);
-    playerRef.current!.paused = false;
-    setPaused(false);
-    playerRef.current!.setBuffers(saved.files);
-    setSnap((prev) => ({ ...prev, buffers: saved.files, active: Object.keys(saved.files)[0] ?? null }));
-
-    // 服务端可能重启过：用本地镜像把现场补回去（有会话就原样返回，不覆盖）
-    try {
-      const sync = await request("/api/session", {
-        id: saved.id,
-        messages: saved.messages ?? [],
-        files: saved.files,
-        seq: saved.round ?? 0,
-      });
-      seqRef.current = sync.seq ?? seqRef.current;
-      if (sync.messages) messagesRef.current = sync.messages;
-      if (sync.files) {
-        filesRef.current = sync.files;
-        playerRef.current!.setBuffers(sync.files);
-      }
-      note("session.restore", `服务端 seq=${sync.seq}`);
-    } catch (e) {
-      note("session.restore", String(e).replace(/^Error:\s*/, ""));
-    }
-
-    if (saved.pending?.length) {
-      setPending(saved.pending);
-      setAskIndex(saved.askIndex ?? 0);
-      setAskAnswers(saved.askAnswers ?? []);
-      setRunning(false);
-      statusRef.current = "waiting";
-      note("resume", "恢复到待回答");
-      return;
-    }
-
-    setPending(null);
-
-    if (saved.status === "running" || saved.status === "paused") {
-      resetRunClock();
-      setRunning(true);
-      statusRef.current = "running";
-      note("resume", "接着跑");
-      void pump();
-    } else {
-      setRunning(false);
-      statusRef.current = "done";
-      note("resume", "恢复到已完成");
-    }
-  };
-
   const stopRun = () => {
     statusRef.current = "done";
     setRunning(false);
@@ -913,64 +830,19 @@ export default function App() {
     playerRef.current!.paused = true;
     setPaused(true);
 
-    // 收尾动作已经在等了：这次其实做完了，不要留一张「没做完」的卡
+    // 收尾动作已经在等了：这次其实做完了，finish 里会自己记进「最近」
     const after = afterPlayerRef.current;
     afterPlayerRef.current = null;
     if (after) {
       after();
-      setResumable(null);
       setStarted(false);
       return;
     }
 
+    // 中途返回：这一场也记进「最近」，没做完就标未完成，下次点开接着做
+    if (itemsRef.current.length > 0) remember(filesRef.current);
     stopRun();
-    const snap = snapshot();
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ ...snap, status: "paused" }));
-    } catch {
-      /* 忽略 */
-    }
-    setResumable({ ...snap, status: "paused" });
     setStarted(false);
-  };
-
-  /** 真正清空：只在首页用 */
-  const clearAll = () => {
-    playerRef.current!.stop();
-    playerRef.current!.paused = false;
-    setPaused(false);
-    stopRun();
-    try {
-      localStorage.removeItem(SESSION_KEY);
-    } catch {
-      /* 忽略 */
-    }
-    setResumable(null);
-    setStarted(false);
-    setSnap(EMPTY);
-    toastReset();
-    setItems([]);
-    itemsRef.current = [];
-    setPending(null);
-    setAnswer("");
-    setAskIndex(0);
-    setAskAnswers([]);
-    setDeclined(null);
-    setError(null);
-    filesRef.current = {};
-    startFilesRef.current = {};
-    serverFilesRef.current = {};
-    messagesRef.current = [];
-    pendingSearchRef.current = "";
-    pendingCardRef.current = null;
-    pendingMessageRef.current = null;
-    afterPlayerRef.current = null;
-    idRef.current = 0;
-    seqRef.current = 0;
-    sessionIdRef.current = "";
-    statusRef.current = "idle";
-    runStartRef.current = 0;
-    setElapsed(0);
   };
 
   const togglePause = () => {
@@ -1076,7 +948,6 @@ export default function App() {
     serverFilesRef.current = item.files;
     pendingSearchRef.current = "";
     pendingCardRef.current = null;
-    messagesRef.current = [];
     seqRef.current = item.round ?? 0;
     idRef.current = items.reduce((m, i) => Math.max(m, i.id), 0);
     player.setBuffers(item.files);
@@ -1087,11 +958,7 @@ export default function App() {
       finished: true,
     });
 
-    let sync: {
-      seq?: number;
-      files?: Record<string, string>;
-      messages?: ChatMessage[];
-    } | null = null;
+    let sync: { seq?: number; files?: Record<string, string> } | null = null;
 
     try {
       // 只带 id：会话还在就原样拿回来
@@ -1115,7 +982,6 @@ export default function App() {
 
     if (!sync) return;
     seqRef.current = sync.seq ?? seqRef.current;
-    messagesRef.current = sync.messages ?? [];
     const files = sync.files ?? item.files;
     filesRef.current = files;
     serverFilesRef.current = files;
@@ -1139,13 +1005,14 @@ export default function App() {
       return next;
     });
 
-    if (resumable?.id === item.id) {
-      setResumable(null);
-      try {
+    // 删掉的就是当前这一场：本地现场一起清掉，刷新后别再冒出来
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw && (JSON.parse(raw) as SavedSession).id === item.id) {
         localStorage.removeItem(SESSION_KEY);
-      } catch {
-        /* 忽略 */
       }
+    } catch {
+      /* 忽略 */
     }
 
     note("history.remove", item.id);
@@ -1165,6 +1032,9 @@ export default function App() {
     firstUserItem && firstUserItem.ev.action === "user"
       ? titleOf(firstUserItem.ev.text, 22)
       : "新项目";
+
+  /** 这一场到底做完没有：顶栏和「最近」用的是同一个判断 */
+  const projectIsDone = projectDone(items);
 
   const liveLabel = liveStatusOf(items, pending, askIndex, running, paused);
   const runTime = runStartRef.current ? elapsedText(elapsed) : "";
@@ -1312,39 +1182,6 @@ export default function App() {
             </div>
             {composer("说一句…")}
 
-            {resumable && (
-              <div className="resume-card">
-                <div className="resume-body">
-                  <div className="resume-title">
-                  {resumable.status === "waiting" ? "上次没答完" : "上次没做完"}
-                </div>
-                  <div className="resume-text">
-                    {resumable.items.find((i) => i.kind === "user")?.ev.action === "user"
-                      ? (resumable.items.find((i) => i.kind === "user")!.ev as { text: string }).text.slice(0, 40)
-                      : "一个项目"}
-                  </div>
-                </div>
-                <div className="resume-actions">
-                  <button
-                    className="resume-icon"
-                    onClick={resume}
-                    title="接着做"
-                    aria-label="接着做"
-                  >
-                    <PencilIcon />
-                  </button>
-                  <button
-                    className="resume-icon danger"
-                    onClick={clearAll}
-                    title="不要了"
-                    aria-label="不要了"
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-              </div>
-            )}
-
             {declined && (
               <div className="decline-card">
                 <div className="decline-text">{declined.text}</div>
@@ -1377,6 +1214,7 @@ export default function App() {
                     className="history-clear"
                     onClick={() => {
                       localStorage.removeItem(HISTORY_KEY);
+                      localStorage.removeItem(SESSION_KEY);
                       setHistory([]);
                     }}
                   >
@@ -1385,19 +1223,19 @@ export default function App() {
                 </div>
                 <div className="history-list">
                   {history.map((item) => (
-                    <div key={item.id} className="resume-card history-card">
+                    <div key={item.id} className="record-card">
                       <button
-                        className="resume-body resume-open"
+                        className="record-body record-open"
                         onClick={() => void openHistory(item)}
                       >
-                        <span className="resume-title">
+                        <span className="record-title">
                           {projectDone(item.items) ? "已完成" : "未完成"}
                         </span>
-                        <span className="resume-text">{item.title || "最近一次"}</span>
+                        <span className="record-text">{item.title || "最近一次"}</span>
                       </button>
-                      <div className="resume-actions">
+                      <div className="record-actions">
                         <button
-                          className="resume-icon"
+                          className="record-icon"
                           onClick={(e) => {
                             e.stopPropagation();
                             void openHistory(item);
@@ -1408,7 +1246,7 @@ export default function App() {
                           <PencilIcon />
                         </button>
                         <button
-                          className="resume-icon danger"
+                          className="record-icon danger"
                           onClick={(e) => {
                             e.stopPropagation();
                             void removeHistory(item);
@@ -1438,8 +1276,20 @@ export default function App() {
         <div className="brand">
           <span className="logo" />
           <span className="name">{projectTitle}</span>
-          <span className={`status ${running ? "busy" : paused ? "paused" : pending ? "wait" : "done"}`}>
-            {running ? "进行中" : paused ? "已暂停" : pending ? "等你回答" : "已完成"}
+          <span
+            className={`status ${
+              running ? "busy" : paused ? "paused" : pending ? "wait" : projectIsDone ? "done" : "wait"
+            }`}
+          >
+            {running
+              ? "进行中"
+              : paused
+                ? "已暂停"
+                : pending
+                  ? "等你回答"
+                  : projectIsDone
+                    ? "已完成"
+                    : "未完成"}
           </span>
         </div>
         <div className="spacer" />
@@ -1948,6 +1798,11 @@ function TimelineItem({
     );
   }
 
+  // 回话是给用户看的正文，直接铺开，别缩成一行摘要
+  if (ev.action === "say") {
+    return <div className="tl say">{ev.text}</div>;
+  }
+
   // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
   if (ev.action === "ask" && live) return null;
 
@@ -1988,7 +1843,6 @@ function kindOf(action: Event["action"]): string {
     write: "",
     edit: "",
     delete: "",
-    say: "回话",
     decline: "拒绝",
     finish: "完成",
     error: "出错",
@@ -2031,7 +1885,6 @@ function summaryOf(ev: Event, pending?: boolean): ReactNode {
           <span className="op-label">{ev.label}</span>
         </>
       );
-    case "say":
     case "decline":
     case "finish":
       return (
@@ -2056,7 +1909,6 @@ function detailOf(
 ): ReactNode | null {
   switch (ev.action) {
     case "think":
-    case "say":
     case "error":
       return ev.text ? <div className="tl-text">{ev.text}</div> : null;
 

@@ -779,9 +779,11 @@ button {
 }
 
 
-/* 最近：跟在卡片下面同一列里，不再单独占页面底部那一条 */
+/* 最近：跟在输入框下面同一列里，用一条细线隔开 */
 .ask-history {
-  margin-top: 26px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
   text-align: left;
 }
 
@@ -1769,7 +1771,7 @@ button {
   background: #f4fbf4;
 }
 
-/* ---- 普通回话（不是提问，也不是拒绝） ---- */
+/* ---- 普通回话（不是提问，也不是拒绝）：整段铺开，不折成一行 ---- */
 .tl.say {
   align-self: flex-start;
   max-width: 92%;
@@ -1780,6 +1782,8 @@ button {
   font-size: 12.5px;
   line-height: 1.65;
   color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ---- 逐题追问 ---- */
@@ -1897,9 +1901,8 @@ button {
   background: #fff;
 }
 
-/* ---- 上次没做完 ---- */
-.resume-card {
-  margin-top: 16px;
+/* ---- 「最近」里的一条记录 ---- */
+.record-card {
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
@@ -1911,12 +1914,12 @@ button {
   gap: 12px;
 }
 
-.resume-body {
+.record-body {
   flex: 1;
   min-width: 0;
 }
 
-.resume-title {
+.record-title {
   display: block;
   font-size: 10.5px;
   letter-spacing: 0.6px;
@@ -1924,7 +1927,7 @@ button {
   color: var(--faint);
 }
 
-.resume-text {
+.record-text {
   display: block;
   margin-top: 4px;
   font-size: 13px;
@@ -1934,17 +1937,12 @@ button {
   white-space: nowrap;
 }
 
-/* ---- 最近：和「上次没做完」同一张卡，只用看上面的状态字区分 ---- */
-.history-card {
-  margin-top: 0;
-}
-
-.resume-open {
+.record-open {
   text-align: left;
   cursor: pointer;
 }
 
-.resume-actions {
+.record-actions {
   flex: 0 0 auto;
   display: flex;
   gap: 4px;
@@ -1955,14 +1953,14 @@ button {
   transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
 }
 
-.resume-card:hover .resume-actions,
-.resume-card:focus-within .resume-actions {
+.record-card:hover .record-actions,
+.record-card:focus-within .record-actions {
   opacity: 1;
   transform: none;
   pointer-events: auto;
 }
 
-.resume-icon {
+.record-icon {
   width: 28px;
   height: 28px;
   display: grid;
@@ -1972,7 +1970,7 @@ button {
   transition: background 0.15s var(--ease), color 0.15s var(--ease);
 }
 
-.resume-icon svg {
+.record-icon svg {
   width: 15px;
   height: 15px;
   fill: none;
@@ -1982,18 +1980,18 @@ button {
   stroke-linejoin: round;
 }
 
-.resume-icon:hover {
+.record-icon:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--ink);
 }
 
-.resume-icon.danger:hover {
+.record-icon.danger:hover {
   background: rgba(179, 38, 30, 0.08);
   color: #b3261e;
 }
 
 @media (hover: none) {
-  .resume-actions {
+  .record-actions {
     opacity: 1;
     transform: none;
     pointer-events: auto;
