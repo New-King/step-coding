@@ -70,6 +70,9 @@ const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 /** 时间线分成两类：对话（用户 / 回话 / 提问 / 拒绝 / 收尾 / 报错）和过程（思考、查看、计划、搜索、写改删） */
 const PROCESS_KINDS = new Set(["think", "look", "plan", "search", "write", "edit", "delete"]);
 
+/** 真会动文件的三类：重播时按它们把时间线分步放回去 */
+const FILE_KINDS = new Set(["write", "edit", "delete"]);
+
 type Row =
   | { kind: "item"; item: Item }
   | { kind: "group"; key: string; items: Item[] };
@@ -227,6 +230,14 @@ export default function App() {
   const stepActiveRef = useRef(false);
   /** 正在重播：只让播放器演，不请求模型、也不走循环 */
   const replayingRef = useRef(false);
+  /** 重播要放回去的整条时间线 */
+  const replayQueueRef = useRef<Item[]>([]);
+  /** 每条要等前面演完几个文件动作才出现，和 queue 一一对应 */
+  const replayUnlockRef = useRef<number[]>([]);
+  /** 已经放回去几条 */
+  const replayShownRef = useRef(0);
+  /** 只给按钮用（重播中换成「取消」）；判断重播与否一律看 replayingRef */
+  const [replaying, setReplaying] = useState(false);
   const [ghostLabel, setGhostLabel] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -245,6 +256,8 @@ export default function App() {
   /** 把现场存下来：刷新后还能在「最近」里找回这一场。 */
   const saveSession = () => {
     if (!sessionIdRef.current) return;
+    // 重播时时间线是半截的：这时候存下去，刷新后记录就少了半场
+    if (replayingRef.current) return;
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(snapshot()));
     } catch {
@@ -257,6 +270,12 @@ export default function App() {
     logsRef.current = [...logsRef.current.slice(-199), entry];
     setLogs(logsRef.current);
     console.info(`[step-coding] ${tag} · ${text}`);
+  };
+
+  /** 进出重播都走这里：ref 是判断依据，state 只管按钮长什么样 */
+  const markReplaying = (on: boolean) => {
+    replayingRef.current = on;
+    setReplaying(on);
   };
 
   /** 新一轮开始时把计时归零；状态行会一直走到这一轮结束。 */
@@ -295,13 +314,46 @@ export default function App() {
     return item;
   };
 
+  /**
+   * 重播时把时间线按进度一条条放回去。
+   *
+   * `done` 是已经演完的文件动作数：每条动作要等排在它前面的文件演完才露面。
+   * 收尾那句和计划排在最后一个文件之后，所以最后一步演完才出来——
+   * 否则文件还在打字，回答就已经挂在下面了。
+   */
+  const replayFeed = (done: number) => {
+    const queue = replayQueueRef.current;
+    const unlock = replayUnlockRef.current;
+    let n = replayShownRef.current;
+    while (n < queue.length && unlock[n] <= done) n += 1;
+    if (n === replayShownRef.current) return;
+    replayShownRef.current = n;
+    itemsRef.current = queue.slice(0, n);
+    setItems(itemsRef.current);
+  };
+
+  /** 重播结束 / 中途退出：整条时间线一次放回去，别留下半截记录 */
+  const restoreTimeline = () => {
+    const queue = replayQueueRef.current;
+    replayQueueRef.current = [];
+    replayUnlockRef.current = [];
+    replayShownRef.current = 0;
+    if (!queue.length) return;
+    itemsRef.current = queue;
+    setItems(queue);
+  };
+
   useEffect(() => {
     const p = playerRef.current!;
     p.cps = cps;
     p.onUpdate = (s) => {
       setSnap(s);
-      // 重播时左栏文件列表没有服务端的 applyChanges 兜底，跟着播放器长出来
-      if (replayingRef.current) filesRef.current = { ...s.buffers };
+      if (replayingRef.current) {
+        // 重播时左栏文件列表没有服务端的 applyChanges 兜底，跟着播放器长出来
+        filesRef.current = { ...s.buffers };
+        // 这一步已经开演就把排在它前面的话放出来，正在打的这一条等演完
+        replayFeed(s.typing ? s.stepIndex - 1 : s.stepIndex);
+      }
     };
     p.onFinish = () => {};
     p.onExhausted = () => {
@@ -309,7 +361,12 @@ export default function App() {
 
       // 重播演完了：和正常收尾一样，先把浮层切成勾，再收起
       if (replayingRef.current) {
-        replayingRef.current = false;
+        markReplaying(false);
+        // 收尾那句和计划这时才放出来，然后整场记录就齐了
+        replayFeed(Number.POSITIVE_INFINITY);
+        replayQueueRef.current = [];
+        replayUnlockRef.current = [];
+        replayShownRef.current = 0;
         statusRef.current = "done";
         toastSettle();
         setRunning(false);
@@ -458,7 +515,12 @@ export default function App() {
     await pump();
   };
 
-  /** 唯一的循环驱动：一次一步，等这一步演完再问下一步。 */
+  /**
+   * 唯一的循环驱动：一次只请求一步。
+   *
+   * 不等动画演完——新动作到了由 `playEvent` 里的 `finishNow()` 收尾，
+   * 只有 `say` / `decline` / `finish` 这类收尾动作才走 `afterAnimation` 等播放器空下来。
+   */
   const pump = async () => {
     // 重播是纯回放：就算有人误触了暂停/继续，也不能去请求下一步
     if (replayingRef.current) return;
@@ -844,11 +906,33 @@ export default function App() {
   /** 退出重播：还没演完的步骤一次性落到底，别把半截文件当成现场存下来 */
   const stopReplay = () => {
     if (!replayingRef.current) return;
-    replayingRef.current = false;
+    markReplaying(false);
     const p = playerRef.current!;
     p.finishNow();
     filesRef.current = p.files();
+    restoreTimeline();
     note("replay", "中途退出，直接落到最终文件");
+  };
+
+  /**
+   * 取消重播：直接把画面退回「这一场已经做完」的样子。
+   *
+   * 剩几步不演了，文件一次落到底，对话整场补回来，状态回到已完成——
+   * 和「演完」看起来一样，只是少了最后那几秒。
+   */
+  const cancelReplay = () => {
+    if (!replayingRef.current) return;
+    stopReplay();
+
+    const p = playerRef.current!;
+    p.stop();
+    p.paused = false;
+    setPaused(false);
+    statusRef.current = "done";
+    setRunning(false);
+    setSnap((s) => ({ ...s, buffers: p.files(), typing: false, finished: true }));
+    saveSession();
+    note("replay", "取消重播，回到完成后的样子");
   };
 
   /** 返回首页：停下手上的活，但把现场留着，回来可以继续 */
@@ -945,7 +1029,24 @@ export default function App() {
     setPeek(null);
     setSnap(EMPTY);
     filesRef.current = { ...base };
-    replayingRef.current = true;
+    markReplaying(true);
+
+    // 对话也退回开场：先把整条时间线记下来，再清空，
+    // 只留「还没动文件」那段（用户那句话、思考…），其余跟着播放器一步步放回来
+    const queue = itemsRef.current.slice();
+    const unlock: number[] = [];
+    let done = 0;
+    for (const it of queue) {
+      unlock.push(done);
+      if (FILE_KINDS.has(it.kind)) done += 1;
+    }
+    replayQueueRef.current = queue;
+    replayUnlockRef.current = unlock;
+    replayShownRef.current = 0;
+    itemsRef.current = [];
+    setItems([]);
+    replayFeed(0);
+
     toastReset();
     resetRunClock();
     setRunning(true);
@@ -1114,27 +1215,31 @@ export default function App() {
   /**
    * 时间线按轮排：用户消息 → 这一轮的过程 → 这一轮的回复。
    *
-   * 过程只在本轮内合并成一块（思考和计划排在回复前面，不会掉到最上面去），
-   * 换到下一条用户消息才另起一块——多轮对话里每块都贴着自己那条答复。
+   * 一轮里的过程只留**一块**，位置固定在回复前面。收尾后补上的自检（plan）
+   * 虽然来得比回复晚，也归到这块里——否则回复下面会多挂一条「思考了 1 步」。
+   * 换到下一条用户消息才另起一块，多轮对话里每块都贴着自己那条答复。
    */
   const rows = useMemo(() => {
-    const out: Row[] = [];
-    let bucket: Item[] = [];
-    const flush = () => {
-      if (!bucket.length) return;
-      out.push({ kind: "group", key: `g${bucket[0].id}`, items: bucket });
-      bucket = [];
-    };
+    const rounds: { head: Item | null; body: Item[] }[] = [{ head: null, body: [] }];
     for (const item of items) {
-      if (PROCESS_KINDS.has(item.kind)) {
-        bucket.push(item);
+      if (item.ev.action === "user") {
+        rounds.push({ head: item, body: [] });
         continue;
       }
-      // 用户又开口了：上一轮剩下的过程先收口
-      flush();
-      out.push({ kind: "item", item });
+      rounds[rounds.length - 1].body.push(item);
     }
-    flush();
+
+    const out: Row[] = [];
+    for (const round of rounds) {
+      if (round.head) out.push({ kind: "item", item: round.head });
+      const process = round.body.filter((it) => PROCESS_KINDS.has(it.kind));
+      if (process.length) {
+        out.push({ kind: "group", key: `g${process[0].id}`, items: process });
+      }
+      for (const it of round.body) {
+        if (!PROCESS_KINDS.has(it.kind)) out.push({ kind: "item", item: it });
+      }
+    }
     return out;
   }, [items]);
 
@@ -1493,10 +1598,23 @@ export default function App() {
           />
           <b>{cps}</b>
         </label>
-        <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
-        <button className="ghost" onClick={replay} disabled={running} title="把这一场重新演一遍（不调用模型）">
-          重播
-        </button>
+        {replaying ? (
+          <button className="ghost" onClick={cancelReplay} title="不演了，直接回到完成后的样子">
+            取消
+          </button>
+        ) : (
+          <>
+            <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
+            <button
+              className="ghost"
+              onClick={replay}
+              disabled={running}
+              title="把这一场重新演一遍（不调用模型）"
+            >
+              重播
+            </button>
+          </>
+        )}
         <button className="primary" onClick={exportZip}>导出代码</button>
         <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
           日志{logs.length > 0 ? ` ${logs.length}` : ""}
