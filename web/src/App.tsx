@@ -233,6 +233,22 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("trace") === "1"
   );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
+  const traceRef = useRef<HTMLDivElement | null>(null);
+
+  /* 点抽屉外面就收起：手机上尤其需要，不然得再点一次日志按钮 */
+  useEffect(() => {
+    if (!traceOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (traceRef.current?.contains(t)) return;
+      // 日志按钮自己会 toggle，别再关一次
+      if (t.closest(".trace-toggle")) return;
+      setTraceOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [traceOpen]);
 
   const [elapsed, setElapsed] = useState(0);
   /** 步骤浮层收尾：方块停转、画个勾，停 2 秒再收起 */
@@ -1676,7 +1692,7 @@ export default function App() {
         </div>
         <div className="spacer" />
         <button
-          className="tool tip"
+          className="tool tip speed-tool"
           data-tip={`速度 · ${SPEEDS[speedIndex].label}`}
           onClick={cycleSpeed}
           aria-label={`演示速度：${SPEEDS[speedIndex].label}，点击切换`}
@@ -1710,7 +1726,7 @@ export default function App() {
           </>
         )}
         <button
-          className={`tool tip ${traceOpen ? "on" : ""}`}
+          className={`tool tip trace-toggle ${traceOpen ? "on" : ""}`}
           data-tip="日志"
           onClick={() => setTraceOpen((v) => !v)}
           aria-label="日志"
@@ -1935,7 +1951,7 @@ export default function App() {
       </main>
 
       {traceOpen && (
-        <div className="trace">
+        <div className="trace" ref={traceRef}>
           <div className="trace-head">
             <span>轨迹 · {items.length} 步</span>
             <input

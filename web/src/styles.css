@@ -1018,6 +1018,8 @@ html[data-theme="dark"] .composer:focus-within {
   flex: 1;
   min-height: 0;
   display: grid;
+  /* 列宽必须能被压缩：默认 auto 会被走马灯撑开，窄屏下整块溢出 */
+  grid-template-columns: minmax(0, 1fr);
   /* safe center：内容比窗口高时从顶部开始，不会被居中挤掉上半截 */
   align-items: safe center;
   justify-items: center;
@@ -2912,5 +2914,149 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     color: var(--ink);
     -webkit-text-fill-color: currentColor;
     animation: none;
+  }
+}
+
+/* ================================================================
+ * 窄屏适配
+ * 平板收一档宽度；手机把三栏拆成单列，整页纵向滚动。
+ * ================================================================ */
+
+@supports (height: 100dvh) {
+  @media (max-width: 900px) {
+    html,
+    body,
+    #root {
+      height: 100dvh;
+    }
+  }
+}
+
+@media (max-width: 900px) {
+  /* 三栏挤不下：文件变横向条，代码与对话上下叠，工作区自己滚 */
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px 14px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 文件条钉在滚动区顶部：下面代码块再长也不会把它带走 */
+  .files {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .files-title,
+  .files-foot {
+    display: none;
+  }
+
+  .file {
+    flex: none;
+  }
+
+  .pane {
+    flex: none;
+    min-height: 42vh;
+  }
+
+  .chat {
+    flex: none;
+    min-height: 46vh;
+  }
+
+  .bar {
+    gap: 4px;
+    padding: 0 8px;
+  }
+
+  .bar-sep {
+    display: none;
+  }
+
+  /* 顶栏放不下这么多：状态和速度先退场，播放控制与导出保留 */
+  .bar .status,
+  .speed-tool {
+    display: none;
+  }
+
+  .name {
+    max-width: none;
+  }
+
+  .primary {
+    padding: 0 12px;
+  }
+
+  .trace {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: auto;
+    max-width: none;
+    max-height: 52vh;
+  }
+}
+
+@media (max-width: 720px) {
+  .ask-hero {
+    /* 内容不满一屏时在视口里居中，超过一屏仍从顶部开始（safe center 自带这个行为） */
+    padding: 28px 18px 34px;
+    align-content: safe center;
+  }
+
+  .ask-inner h1 {
+    margin: 30px 0 12px;
+    font-size: 30px;
+    letter-spacing: -0.7px;
+  }
+
+  .ask-inner h1 .caret-block {
+    width: 9px;
+    height: 23px;
+    vertical-align: -2px;
+  }
+
+  .ask-inner p {
+    margin-bottom: 24px;
+    font-size: 12.5px;
+  }
+
+  .ask .composer {
+    padding: 13px 14px;
+    border-radius: 9px;
+  }
+
+  /* iOS 上小于 16px 的输入框会让页面自动放大 */
+  .composer textarea {
+    font-size: 16px;
+  }
+
+  .ask-examples {
+    margin-bottom: 16px;
+  }
+
+  .ask-history {
+    margin-top: 32px;
+  }
+
+  /* 一行放不下「未完成」，状态交给前面的勾 / 空圈 */
+  .line .meta {
+    display: none;
+  }
+
+  .line .t {
+    font-size: 12.5px;
   }
 }
