@@ -255,8 +255,9 @@ export default function App() {
   /* 呼出后把光标放进输入框，手机上会连带弹出键盘 */
   useEffect(() => {
     if (!composerOpen) return;
+    // preventScroll：不给浏览器机会为了"让输入框可见"去滚一下容器
     const t = setTimeout(() => {
-      document.querySelector<HTMLTextAreaElement>(".chat-foot textarea")?.focus();
+      document.querySelector<HTMLTextAreaElement>(".chat-foot textarea")?.focus({ preventScroll: true });
     }, 40);
     return () => clearTimeout(t);
   }, [composerOpen]);
@@ -1493,7 +1494,7 @@ export default function App() {
    *
    * `prompt` / `send` 只给首页用（终端风的 `›` 和 run）；对话页保持原来的箭头圆钮。
    */
-  const composer = (opts: { prompt?: string; send?: string } = {}) => (
+  const composer = (opts: { prompt?: string; send?: string; autoFocus?: boolean } = {}) => (
     <div
       className={`composer ${running ? "busy" : ""}`}
       // 点框里任何地方都落到输入框上，不用非得点中那行字
@@ -1514,7 +1515,7 @@ export default function App() {
         }}
         rows={1}
         disabled={running}
-        autoFocus
+        autoFocus={opts.autoFocus}
       />
       <button
         className={`composer-send ${opts.send ? "text" : ""}`}
@@ -1522,7 +1523,7 @@ export default function App() {
         disabled={running || !question.trim()}
         title="发送"
       >
-        {opts.send ?? "→"}
+        {opts.send ?? <ArrowUpIcon />}
       </button>
     </div>
   );
@@ -1575,7 +1576,7 @@ export default function App() {
               </div>
             </div>
 
-            {composer({ prompt: "›", send: "run" })}
+            {composer({ prompt: "›", send: "run", autoFocus: false })}
 
             {declined && (
               <div className="decline-card">
@@ -1965,7 +1966,7 @@ export default function App() {
             />
           )}
           <div className="chat-foot">
-            {composer()}
+            {composer({ autoFocus: true })}
           </div>
           <button className="fab" onClick={() => setComposerOpen(true)} aria-label="开始输入">
             <PencilIcon />
@@ -2306,6 +2307,14 @@ function PendIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
       <circle cx="12" cy="12" r="4.5" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M12 19V5.5M6.2 11.3L12 5.5l5.8 5.8" />
     </svg>
   );
 }

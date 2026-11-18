@@ -41,6 +41,8 @@
   --glow-b: rgba(0, 0, 0, 0.035);
   /* 玻璃层：半透明底，配合 backdrop-filter 让滚动内容从下面虚化着过 */
   --glass: rgba(255, 255, 255, 0.58);
+  /* 滚动区上下边缘的渐隐高度 */
+  --fade: 14px;
   /* 代码区：比白卡片暗半档的纸色，靠边框和正文区分，不靠颜色反差 */
   --code-bg: #f7f7f9;
   --code-ink: #232326;
@@ -445,6 +447,21 @@ html[data-theme="dark"] .tool:disabled:hover {
   overflow: overlay;
   padding: 16px 20px 28px;
   color: var(--code-ink);
+  /* 上下边缘各留一段渐隐：内容滚到边上时化开，而不是被硬切 */
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
 }
 
 .code pre {
@@ -845,6 +862,16 @@ html[data-theme="dark"] .composer:focus-within {
   transition: all 0.2s var(--ease);
 }
 
+.composer-send svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .composer-send:hover:not(:disabled) {
   background: var(--accent-hover);
 }
@@ -928,6 +955,20 @@ html[data-theme="dark"] .composer:focus-within {
   padding: 12px;
   padding-top: 12px;
   max-height: none;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
 }
 
 .chat-empty {
@@ -968,7 +1009,6 @@ html[data-theme="dark"] .composer:focus-within {
 .chat-foot {
   flex: 0 0 auto;
   padding: 10px;
-  border-top: 1px solid var(--line-soft);
 }
 
 .chat-foot .composer {
@@ -1200,12 +1240,19 @@ html[data-theme="dark"] .ask .composer:focus-within {
   background: transparent;
   color: var(--muted);
   font-size: 11.5px;
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease),
+    color 0.16s var(--ease), filter 0.16s var(--ease);
 }
 
-.ask .composer-send.text:hover:not(:disabled) {
+/* 一有内容就点亮：不用把鼠标挪上去才知道能发 */
+.ask .composer-send.text:not(:disabled) {
   background: var(--brand);
   border-color: var(--brand);
   color: var(--on-accent);
+}
+
+.ask .composer-send.text:not(:disabled):hover {
+  filter: brightness(1.1);
 }
 
 /*
@@ -3013,26 +3060,36 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     padding-bottom: 20px;
   }
 
-  .chat.composer-open .chat-log {
-    padding-bottom: 80px;
-  }
-
   /*
    * 手机上前端输入框默认不占位：一个悬浮按钮呼出，
    * 展开时浮在对话内容之上，发出去就收起。
    */
+  /*
+   * 不占位 + 从下方浮出：用 transform/visibility 过渡，
+   * display 切换是没法做动画的。
+   */
   .chat-foot {
-    display: none;
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
     z-index: 5;
     box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(108%);
+    /* 提前建好合成层，第一次展开不会因建层闪一下 */
+    will-change: transform, opacity;
+    transition: transform 0.28s var(--ease), opacity 0.2s var(--ease),
+      visibility 0s linear 0.28s;
   }
 
   .chat.composer-open .chat-foot {
-    display: block;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition: transform 0.28s var(--ease), opacity 0.16s var(--ease),
+      visibility 0s;
   }
 
   .fab {
@@ -3048,7 +3105,7 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     background: var(--accent);
     color: var(--on-accent);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
-    transition: transform 0.16s var(--ease);
+    transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
   }
 
   .fab svg {
@@ -3066,7 +3123,9 @@ html[data-theme="dark"] .line .acts button.danger:hover {
   }
 
   .chat.composer-open .fab {
-    display: none;
+    opacity: 0;
+    transform: scale(0.86);
+    pointer-events: none;
   }
 
   /* 展开时点对话区收起，不留一个只能靠发消息才能关的输入框 */
