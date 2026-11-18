@@ -39,6 +39,8 @@
   /* 首页背景的两团光：顶部一点品牌绿，右下一点空气感 */
   --glow-a: rgba(47, 122, 63, 0.07);
   --glow-b: rgba(0, 0, 0, 0.035);
+  /* 玻璃层：半透明底，配合 backdrop-filter 让滚动内容从下面虚化着过 */
+  --glass: rgba(255, 255, 255, 0.58);
   /* 代码区：比白卡片暗半档的纸色，靠边框和正文区分，不靠颜色反差 */
   --code-bg: #f7f7f9;
   --code-ink: #232326;
@@ -84,6 +86,7 @@ html[data-theme="dark"] {
   --on-bubble: #f2f2f4;
   --glow-a: rgba(87, 171, 104, 0.13);
   --glow-b: rgba(255, 255, 255, 0.045);
+  --glass: rgba(40, 40, 42, 0.58);
   --code-bg: #1e1e20;
   --code-ink: #dcdce1;
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.1);
@@ -896,6 +899,12 @@ html[data-theme="dark"] .composer:focus-within {
 /* ---- 讲解页：右侧对话面板 ---- */
 .workspace {
   grid-template-columns: 190px minmax(0, 1fr) 306px;
+}
+
+/* 手机端的悬浮输入按钮，桌面上不出现 */
+.fab,
+.chat-scrim {
+  display: none;
 }
 
 .chat {
@@ -2933,21 +2942,25 @@ html[data-theme="dark"] .line .acts button.danger:hover {
 }
 
 @media (max-width: 900px) {
-  /* 三栏挤不下：文件变横向条，代码与对话上下叠，工作区自己滚 */
+  /*
+   * 三栏挤不下，改成上下固定分屏：
+   * 顶栏、文件条不动，代码区和对话区各占一半、各自滚动，
+   * 输入框天然钉在对话区底部，不会再被消息推走。
+   */
+  .app {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
   .workspace {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 10px 12px 14px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    gap: 8px;
+    padding: 8px 10px 10px;
+    overflow: hidden;
   }
 
-  /* 文件条钉在滚动区顶部：下面代码块再长也不会把它带走 */
   .files {
-    position: sticky;
-    top: 0;
-    z-index: 6;
     flex: none;
     flex-direction: row;
     align-items: center;
@@ -2966,14 +2979,143 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     flex: none;
   }
 
+  /* 代码 2 / 对话 1；basis 归零，比例才严格按 grow 分配 */
   .pane {
-    flex: none;
-    min-height: 42vh;
+    flex: 2 1 0;
+    min-height: 0;
   }
 
   .chat {
-    flex: none;
-    min-height: 46vh;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  /* 顶栏、文件条、输入框都用同一层玻璃 */
+  .bar,
+  .files,
+  .chat-foot,
+  .code-head {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(10px) saturate(1.4);
+    backdrop-filter: blur(10px) saturate(1.4);
+  }
+
+  /*
+   * 输入框改成覆盖在对话区上的浮层：
+   * 消息滚到底会从它下面滑过去，那层模糊才有东西可模糊。
+   */
+  .chat {
+    position: relative;
+  }
+
+  .chat-log {
+    /* 平时只给右下角的悬浮按钮让出一点位置 */
+    padding-bottom: 66px;
+  }
+
+  .chat.composer-open .chat-log {
+    padding-bottom: 80px;
+  }
+
+  /*
+   * 手机上前端输入框默认不占位：一个悬浮按钮呼出，
+   * 展开时浮在对话内容之上，发出去就收起。
+   */
+  .chat-foot {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    box-shadow: 0 -10px 18px -14px rgba(0, 0, 0, 0.35);
+  }
+
+  .chat.composer-open .chat-foot {
+    display: block;
+  }
+
+  .fab {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    z-index: 4;
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+    transition: transform 0.16s var(--ease);
+  }
+
+  .fab svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .fab:active {
+    transform: scale(0.94);
+  }
+
+  .chat.composer-open .fab {
+    display: none;
+  }
+
+  /* 展开时点对话区收起，不留一个只能靠发消息才能关的输入框 */
+  .chat-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: transparent;
+    border: 0;
+    cursor: default;
+  }
+
+  /* 代码区的文件标题条同理，代码从它下面滚过去 */
+  .code-head {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .code {
+    padding: 46px 16px 24px;
+  }
+
+  /*
+   * 玻璃下面再接一层渐隐：内容不是被一条硬边切掉，
+   * 而是在 18px 里慢慢化进玻璃里。
+   */
+  .code-head::after,
+  .chat-foot::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 18px;
+    pointer-events: none;
+  }
+
+  .code-head::after {
+    top: 100%;
+    background: linear-gradient(180deg, var(--glass), transparent);
+  }
+
+  .chat-foot::before {
+    bottom: 100%;
+    background: linear-gradient(0deg, var(--glass), transparent);
   }
 
   .bar {

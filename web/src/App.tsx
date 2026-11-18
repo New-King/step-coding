@@ -233,6 +233,8 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("trace") === "1"
   );
   const [logs, setLogs] = useState<{ t: number; tag: string; text: string }[]>([]);
+  /** 手机上输入框默认收起，由右下角的悬浮按钮呼出；桌面上这个状态不起作用 */
+  const [composerOpen, setComposerOpen] = useState(false);
   const traceRef = useRef<HTMLDivElement | null>(null);
 
   /* 点抽屉外面就收起：手机上尤其需要，不然得再点一次日志按钮 */
@@ -249,6 +251,15 @@ export default function App() {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [traceOpen]);
+
+  /* 呼出后把光标放进输入框，手机上会连带弹出键盘 */
+  useEffect(() => {
+    if (!composerOpen) return;
+    const t = setTimeout(() => {
+      document.querySelector<HTMLTextAreaElement>(".chat-foot textarea")?.focus();
+    }, 40);
+    return () => clearTimeout(t);
+  }, [composerOpen]);
 
   const [elapsed, setElapsed] = useState(0);
   /** 步骤浮层收尾：方块停转、画个勾，停 2 秒再收起 */
@@ -931,6 +942,7 @@ export default function App() {
     const value = text.trim();
     if (!value) return;
     setQuestion("");
+    setComposerOpen(false);
 
     if (pending) {
       await answerAsk(value);
@@ -1846,7 +1858,7 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="chat">
+        <aside className={`chat ${composerOpen ? "composer-open" : ""}`}>
           <div
             className="chat-log"
             ref={logRef}
@@ -1944,9 +1956,20 @@ export default function App() {
             )}
 
           </div>
+          {composerOpen && (
+            <button
+              className="chat-scrim"
+              onClick={() => setComposerOpen(false)}
+              aria-label="收起输入框"
+              tabIndex={-1}
+            />
+          )}
           <div className="chat-foot">
             {composer()}
           </div>
+          <button className="fab" onClick={() => setComposerOpen(true)} aria-label="开始输入">
+            <PencilIcon />
+          </button>
         </aside>
       </main>
 
