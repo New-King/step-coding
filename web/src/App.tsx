@@ -236,6 +236,13 @@ export default function App() {
   const replayUnlockRef = useRef<number[]>([]);
   /** 已经放回去几条 */
   const replayShownRef = useRef(0);
+  /**
+   * 重播开始前那一份完整文件。
+   *
+   * 取消 / 中途退出不能拿播放器的 buffers 当结果：`finishNow()` 只补还没开演的步骤，
+   * 正在一个字一个字打的那个文件，剩下半截会被丢掉。要复位就用这份存下来的原文。
+   */
+  const replayFilesRef = useRef<Record<string, string>>({});
   /** 只给按钮用（重播中换成「取消」）；判断重播与否一律看 replayingRef */
   const [replaying, setReplaying] = useState(false);
   const [ghostLabel, setGhostLabel] = useState("");
@@ -367,6 +374,7 @@ export default function App() {
         replayQueueRef.current = [];
         replayUnlockRef.current = [];
         replayShownRef.current = 0;
+        replayFilesRef.current = {};
         statusRef.current = "done";
         toastSettle();
         setRunning(false);
@@ -909,7 +917,15 @@ export default function App() {
     markReplaying(false);
     const p = playerRef.current!;
     p.finishNow();
-    filesRef.current = p.files();
+
+    // 别用 p.files()：正在打的那个文件剩半截被 finishNow 丢了，
+    // 用重播前存下的完整原文复位，播放器也跟着一起对齐
+    const full = replayFilesRef.current;
+    replayFilesRef.current = {};
+    const files = Object.keys(full).length ? full : p.files();
+    filesRef.current = files;
+    p.setBuffers(files);
+
     restoreTimeline();
     note("replay", "中途退出，直接落到最终文件");
   };
@@ -930,7 +946,7 @@ export default function App() {
     setPaused(false);
     statusRef.current = "done";
     setRunning(false);
-    setSnap((s) => ({ ...s, buffers: p.files(), typing: false, finished: true }));
+    setSnap((s) => ({ ...s, buffers: filesRef.current, typing: false, finished: true }));
     saveSession();
     note("replay", "取消重播，回到完成后的样子");
   };
@@ -1028,6 +1044,8 @@ export default function App() {
     setPaused(false);
     setPeek(null);
     setSnap(EMPTY);
+    // 取消时要用它复位：播放器只会演到一半，演到哪算哪
+    replayFilesRef.current = filesRef.current;
     filesRef.current = { ...base };
     markReplaying(true);
 
