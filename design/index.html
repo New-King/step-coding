@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>首页设计稿 · 四选一</title>
+    <style>
+      :root { --line: rgba(0, 0, 0, 0.1); --ease: cubic-bezier(0.22, 0.61, 0.36, 1); }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 48px 32px 72px; background: #f6f6f7; color: #111;
+        font: 14px/1.65 "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+      }
+      .head { max-width: 1080px; margin: 0 auto 28px; }
+      h1 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.4px; }
+      .head p { margin: 0; color: #86868b; font-size: 13px; }
+      .grid {
+        max-width: 1080px; margin: 0 auto; display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 20px;
+      }
+      a.card {
+        display: block; text-decoration: none; color: inherit; background: #fff;
+        border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
+        transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
+      }
+      a.card:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.09); }
+      .thumb { height: 230px; overflow: hidden; border-bottom: 1px solid var(--line); background: #fafafa; }
+      .thumb iframe { width: 1280px; height: 800px; border: 0; transform: scale(0.5); transform-origin: top left; }
+      .meta { padding: 14px 16px 16px; }
+      .meta b { display: block; font-size: 14px; margin-bottom: 3px; }
+      .meta span { font-size: 12.5px; color: #86868b; }
+    </style>
+  </head>
+  <body>
+    <div class="head">
+      <h1>首页设计稿 · 四选一</h1>
+      <p>点卡片看整页。选定后我把对应方案落到 <code>web/src</code>，其余删掉。</p>
+    </div>
+    <div class="grid">
+      <a class="card" href="home-a.html">
+        <div class="thumb"><iframe src="home-a.html" loading="lazy"></iframe></div>
+        <div class="meta"><b>A · 极简居中</b><span>当前方向的加强版：大留白、单色、无卡片，最近是一条条细线</span></div>
+      </a>
+      <a class="card" href="home-b.html">
+        <div class="thumb"><iframe src="home-b.html" loading="lazy"></iframe></div>
+        <div class="meta"><b>B · 编辑排印</b><span>刊物感：衬线大标题、编号目录、下划线输入，最不像"AI 产品"</span></div>
+      </a>
+      <a class="card" href="home-c.html">
+        <div class="thumb"><iframe src="home-c.html" loading="lazy"></iframe></div>
+        <div class="meta"><b>C · 左右分栏</b><span>左边标语与示例清单，右边一张卡装输入和最近，最有"产品感"</span></div>
+      </a>
+      <a class="card" href="home-d.html">
+        <div class="thumb"><iframe src="home-d.html" loading="lazy"></iframe></div>
+        <div class="meta"><b>D · 深色终端</b><span>mono 字体 + prompt 输入 + 日志式最近，技术味最重</span></div>
+      </a>
+      <a class="card" href="home-d-toggle.html">
+        <div class="thumb"><iframe src="home-d-toggle.html" loading="lazy"></iframe></div>
+        <div class="meta"><b>D2 · 终端风（黑白可切）</b><span>同一套版式，浅色为默认，右上角按钮切深色；色值全在变量层</span></div>
+      </a>
+    </div>
+  </body>
+</html>

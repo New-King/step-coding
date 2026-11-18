@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>B · 编辑排印</title>
+    <style>
+      :root {
+        --page: #fbfaf8;
+        --ink: #16150f;
+        --muted: #6f6c62;
+        --faint: #a8a49a;
+        --line: rgba(22, 21, 15, 0.12);
+        --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: var(--page); color: var(--ink);
+        font: 14px/1.65 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .page { max-width: 1040px; margin: 0 auto; padding: 46px 40px 80px; }
+
+      /* 顶部：细线 + 小字，像一本刊物的刊头 */
+      header {
+        display: flex; align-items: baseline; justify-content: space-between;
+        padding-bottom: 14px; border-bottom: 1px solid var(--line);
+        font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--faint);
+      }
+      .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); letter-spacing: 0.6px; }
+      .brand .dot { width: 9px; height: 9px; background: var(--ink); border-radius: 2px; }
+
+      /* 主区：左边大标题，右边说明 */
+      .hero {
+        display: grid; grid-template-columns: 1.35fr 0.65fr; gap: 40px;
+        align-items: end; padding: 64px 0 44px; border-bottom: 1px solid var(--line);
+      }
+      h1 {
+        margin: 0; font-family: Georgia, "Songti SC", "Noto Serif SC", serif;
+        font-size: 76px; font-weight: 400; line-height: 1.02; letter-spacing: -2.4px;
+      }
+      h1 em { font-style: italic; }
+      .lede { margin: 0 0 6px; font-size: 15px; line-height: 1.8; color: var(--muted); }
+      .lede b { color: var(--ink); font-weight: 600; }
+
+      /* 输入：一条下划线，像填一张表 */
+      .askline { display: flex; align-items: center; gap: 14px; padding: 30px 0 0; }
+      .askline span.num { font-size: 11px; letter-spacing: 1.2px; color: var(--faint); }
+      .askline textarea {
+        flex: 1; min-width: 0; border: 0; border-bottom: 1px solid var(--ink);
+        background: transparent; outline: 0; resize: none; font: inherit;
+        font-size: 19px; padding: 8px 0 12px; color: var(--ink);
+      }
+      .askline textarea::placeholder { color: var(--faint); }
+      .go {
+        border: 1px solid var(--ink); background: var(--ink); color: #fff;
+        font: inherit; font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase;
+        padding: 12px 20px; border-radius: 2px; cursor: pointer;
+        transition: background 0.18s var(--ease), color 0.18s var(--ease);
+      }
+      .go:hover { background: transparent; color: var(--ink); }
+
+      /* 示例：印成一行一行的小注 */
+      .examples { padding: 26px 0 0; }
+      .examples .label { font-size: 10.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--faint); }
+      .examples ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 26px; }
+      .examples li button {
+        border: 0; background: none; padding: 0 0 2px; cursor: pointer;
+        font: inherit; font-size: 14.5px; color: var(--muted);
+        border-bottom: 1px solid transparent; transition: color 0.16s var(--ease), border-color 0.16s var(--ease);
+      }
+      .examples li button:hover { color: var(--ink); border-color: var(--ink); }
+
+      /* 最近：编号目录 */
+      .recent { margin-top: 58px; }
+      .recent-head {
+        display: flex; align-items: baseline; justify-content: space-between;
+        font-size: 10.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--faint);
+        padding-bottom: 10px; border-bottom: 1px solid var(--ink);
+      }
+      .recent-head button {
+        border: 0; background: none; font: inherit; font-size: 11px; letter-spacing: 0.4px;
+        text-transform: none; color: var(--muted); cursor: pointer;
+      }
+      .recent-head button:hover { color: var(--ink); }
+      .item {
+        display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 18px;
+        padding: 18px 0; border-bottom: 1px solid var(--line); cursor: pointer;
+      }
+      .item .no { font-size: 11px; letter-spacing: 1.2px; color: var(--faint); }
+      .item .t { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .item .t small { display: block; margin-top: 4px; font-size: 11px; letter-spacing: 0.6px; color: var(--faint); text-transform: uppercase; }
+      .item .t small.done { color: #5d8a5f; }
+      .item .acts { display: flex; gap: 10px; opacity: 0; transition: opacity 0.18s var(--ease); }
+      .item:hover .acts, .item:focus-within .acts { opacity: 1; }
+      .item .acts button {
+        border: 0; background: none; padding: 0; cursor: pointer;
+        font: inherit; font-size: 12px; color: var(--muted);
+        border-bottom: 1px solid transparent;
+      }
+      .item .acts button:hover { color: var(--ink); border-color: var(--ink); }
+      .item .acts button.danger:hover { color: #b3261e; border-color: rgba(179, 38, 30, 0.5); }
+
+      @media (max-width: 820px) {
+        .hero { grid-template-columns: 1fr; gap: 20px; align-items: start; }
+        h1 { font-size: 52px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <span class="brand"><span class="dot"></span>Step Coding</span>
+        <span>一步一步 看得见</span>
+      </header>
+
+      <div class="hero">
+        <h1>Take<br />your <em>time</em></h1>
+        <p class="lede">
+          先想、再看、再问、再动手。<br />
+          代码不是变出来的，是<b>一行一行</b>写出来的——所以每一步都留在屏幕上。
+        </p>
+      </div>
+
+      <div class="askline">
+        <span class="num">01</span>
+        <textarea rows="1" placeholder="想弄懂什么，写下来"></textarea>
+        <button class="go">开始</button>
+      </div>
+
+      <div class="examples">
+        <span class="label">从这些开始</span>
+        <ul>
+          <li><button>登录注册是怎么回事</button></li>
+          <li><button>function call 怎么调起来的</button></li>
+          <li><button>LangGraph 的节点怎么串</button></li>
+          <li><button>快速排序为什么快</button></li>
+          <li><button>爬虫怎么抓到数据</button></li>
+          <li><button>批量改文件名靠什么</button></li>
+          <li><button>单元测试在测什么</button></li>
+          <li><button>Docker 到底做了什么</button></li>
+        </ul>
+      </div>
+
+      <section class="recent">
+        <div class="recent-head">
+          <span>最近 / Recent</span>
+          <button>清空</button>
+        </div>
+        <div class="item">
+          <span class="no">01</span>
+          <span class="t">登录注册是怎么回事<small class="done">已完成</small></span>
+          <span class="acts"><button>继续</button><button class="danger">删除</button></span>
+        </div>
+        <div class="item">
+          <span class="no">02</span>
+          <span class="t">function call 怎么调起来的<small class="done">已完成</small></span>
+          <span class="acts"><button>继续</button><button class="danger">删除</button></span>
+        </div>
+        <div class="item">
+          <span class="no">03</span>
+          <span class="t">爬虫怎么抓到数据<small>未完成</small></span>
+          <span class="acts"><button>继续</button><button class="danger">删除</button></span>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

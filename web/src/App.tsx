@@ -1449,9 +1449,14 @@ export default function App() {
     downloadZip("step-coding.zip", entries);
   };
 
-  /** 输入框不带任何占位文字：想说什么自己写，别用一句"说一句"教人说话 */
-  const composer = () => (
+  /**
+   * 输入框不带任何占位文字：想说什么自己写，别用一句"说一句"教人说话。
+   *
+   * `prompt` / `send` 只给首页用（终端风的 `›` 和 run）；对话页保持原来的箭头圆钮。
+   */
+  const composer = (opts: { prompt?: string; send?: string } = {}) => (
     <div className={`composer ${running ? "busy" : ""}`}>
+      {opts.prompt && <span className="composer-prompt">{opts.prompt}</span>}
       <textarea
         ref={composerRef}
         value={question}
@@ -1467,12 +1472,12 @@ export default function App() {
         autoFocus
       />
       <button
-        className="composer-send"
+        className={`composer-send ${opts.send ? "text" : ""}`}
         onClick={() => void send(question)}
         disabled={running || !question.trim()}
         title="发送"
       >
-        →
+        {opts.send ?? "→"}
       </button>
     </div>
   );
@@ -1484,29 +1489,33 @@ export default function App() {
       <div className="ask">
         <div className="ask-hero">
           <div className="ask-inner">
-            <div className="ask-mark" />
-            <h1>Take your time</h1>
-            <p>先想、再看、再问、再动手——每一步都留在屏幕上。</p>
-            {/* 一行走马灯：内容放两份首尾相接，走完一份正好接上 */}
-            <div className="ask-examples">
-              <div className="ask-track">
-                {[0, 1].map((copy) => (
-                  <div className="ask-set" key={copy} aria-hidden={copy === 1}>
-                    {EXAMPLES.map((item) => (
-                      <button
-                        key={item.ask}
-                        className="ask-chip"
-                        tabIndex={copy === 1 ? -1 : 0}
-                        onClick={() => void start(item.ask)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
+            <div className="ask-top">
+              <span className="left">
+                <i className="dot" />
+                step-coding · ready
+              </span>
+              <span>每一次都能看清</span>
             </div>
-            {composer()}
+
+            <h1>
+              Take your time
+              <span className="caret-block" aria-hidden />
+            </h1>
+            <p>
+              <b>先想 → 再看 → 再问 → 再动手。</b>
+              <br />
+              代码一行一行写在屏幕上，慢一点也看得清。
+            </p>
+
+            {composer({ prompt: "›", send: "run" })}
+
+            <div className="ask-examples">
+              {EXAMPLES.map((item) => (
+                <button key={item.ask} className="ask-chip" onClick={() => void start(item.ask)}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
 
             {declined && (
               <div className="decline-card">
@@ -1535,7 +1544,7 @@ export default function App() {
             {history.length > 0 && (
               <section className="ask-history">
                 <div className="history-title">
-                  <span>最近</span>
+                  <span>最近 · {history.length}</span>
                   {confirmClear ? (
                     <span className="history-confirm">
                       清空全部？
@@ -1563,49 +1572,40 @@ export default function App() {
                   )}
                 </div>
                 <div className="history-list">
-                  {history.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`record-card ${removingId === item.id ? "removing" : ""}`}
-                    >
-                      <button
-                        className="record-body record-open"
-                        onClick={() => void openHistory(item)}
+                  {history.map((item) => {
+                    const done = projectDone(item.items);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`line ${removingId === item.id ? "removing" : ""}`}
                       >
-                        <span className="record-title">
-                          {projectDone(item.items) ? "已完成" : "未完成"}
+                        <button className="line-open" onClick={() => void openHistory(item)}>
+                          <span className={`ok ${done ? "" : "wait"}`}>{done ? "✓" : "·"}</span>
+                          <span className="t">{item.title || "最近一次"}</span>
+                          <span className="meta">
+                            {done ? (item.round ? `${item.round} 步` : "已完成") : "未完成"}
+                          </span>
+                        </button>
+                        <span className="acts">
+                          <button onClick={() => void openHistory(item)} title="继续修改">
+                            继续
+                          </button>
+                          <button
+                            className="danger"
+                            onClick={() => commitDelete(item)}
+                            title="删除"
+                          >
+                            删除
+                          </button>
                         </span>
-                        <span className="record-text">{item.title || "最近一次"}</span>
-                      </button>
-                      <div className="record-actions">
-                        <button
-                          className="record-icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void openHistory(item);
-                          }}
-                          title="继续修改"
-                          aria-label="继续修改"
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          className="record-icon danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            commitDelete(item);
-                          }}
-                          title="删除"
-                          aria-label="删除"
-                        >
-                          <TrashIcon />
-                        </button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             )}
+
+            <div className="ask-foot">每一步都留在屏幕上</div>
           </div>
         </div>
       </div>
@@ -2117,14 +2117,6 @@ function PencilIcon() {
     <svg viewBox="0 0 24 24" aria-hidden>
       <path d="M4 20h4L19 9l-4-4L4 16v4z" />
       <path d="M13.5 6.5l4 4" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden>
-      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
     </svg>
   );
 }

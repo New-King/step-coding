@@ -767,12 +767,20 @@ button {
   color: var(--ink);
 }
 
-/* ---- 欢迎页（独立页面，居中；内容多了可以滚，别把拒绝卡挤出屏幕） ---- */
+/*
+ * 欢迎页：终端风的浅色版。
+ *
+ * 等宽字体、细线分隔、prompt 输入——技术味靠排版，不靠黑底；
+ * 底色跟工作区一致（近白），点进对话不会突然换一套颜色。
+ */
 .ask {
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  background: #fbfbfb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, "PingFang SC", "Hiragino Sans GB",
+    monospace;
 }
 
 .ask-hero {
@@ -782,111 +790,169 @@ button {
   /* safe center：内容比窗口高时从顶部开始，不会被居中挤掉上半截 */
   align-items: safe center;
   justify-items: center;
-  padding: 56px 24px 64px;
+  padding: 52px 28px 88px;
 }
-
 
 .ask-inner {
   width: 100%;
-  max-width: 600px;
-  text-align: center;
+  max-width: 860px;
+  text-align: left;
   display: flex;
   flex-direction: column;
 }
 
-.ask-mark {
-  width: 48px;
-  height: 48px;
-  border-radius: 13px;
-  background: var(--accent);
-  position: relative;
-  margin: 0 auto 22px;
+/* 顶栏：一个小圆点 + 项目名，右边留空，别放假链接 */
+.ask-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--faint);
 }
 
-.ask-mark::after {
-  content: "";
-  position: absolute;
-  inset: 14px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.85);
-}
-
-.ask-inner h1 {
-  margin: 0 0 10px;
-  font-size: 34px;
-  font-weight: 600;
-  letter-spacing: -0.9px;
-  line-height: 1.2;
-}
-
-.ask-inner p {
-  margin: 0 0 26px;
-  font-size: 15px;
-  line-height: 1.7;
+.ask-top .left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
 }
 
-/*
- * 示例只占一行，横向慢慢走：内容复制两份首尾相接，走完一份正好接上，看着无限。
- * 鼠标移上去停住，两边的淡出让它在容器边缘不至于硬切。
- */
-.ask-examples {
-  overflow: hidden;
-  margin-bottom: 14px;
-  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
-}
-
-.ask-track {
-  display: flex;
-  width: max-content;
-  animation: ask-marquee 42s linear infinite;
-}
-
-.ask-set {
-  display: flex;
+.ask-top .dot {
+  display: inline-block;
   flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2f7a3f;
+}
+
+.ask-inner h1 {
+  margin: 62px 0 16px;
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -1.2px;
+  line-height: 1.15;
+}
+
+/* 标题后面那块光标：终端里的等待感，比加 emoji 克制 */
+.ask-inner h1 .caret-block {
+  display: inline-block;
+  width: 12px;
+  height: 34px;
+  margin-left: 8px;
+  vertical-align: -3px;
+  background: #2f7a3f;
+  animation: caret-blink 1.1s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.ask-inner p {
+  margin: 0 0 38px;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+
+.ask-inner p b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* 首页的输入条：一行 prompt，白底细框，不用大圆角 */
+.ask .composer {
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.ask .composer:focus-within {
+  border-color: #2f7a3f;
+  box-shadow: 0 0 0 3px rgba(47, 122, 63, 0.12);
+}
+
+.ask .composer-prompt {
+  color: #2f7a3f;
+  font-size: 14px;
+}
+
+.ask .composer textarea {
+  font-size: 14px;
+  padding: 3px 0;
+}
+
+.ask .composer-send.text {
+  width: auto;
+  height: auto;
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.ask .composer-send.text:hover:not(:disabled) {
+  background: #2f7a3f;
+  border-color: #2f7a3f;
+  color: #fff;
+}
+
+/* 示例：平铺成几行，看得完也点得到 */
+.ask-examples {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  padding-right: 8px;
+  margin: 26px 0 0;
 }
 
-@keyframes ask-marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
+.ask-chip {
+  flex: none;
+  white-space: nowrap;
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.16s var(--ease), border-color 0.16s var(--ease),
+    transform 0.16s var(--ease);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ask-examples {
-    overflow-x: auto;
-    mask-image: none;
-  }
-
-  .ask-track {
-    animation: none;
-  }
+.ask-chip:hover {
+  color: var(--ink);
+  border-color: var(--faint);
+  transform: translateY(-1px);
 }
 
-
-/* 最近：跟在输入框下面同一列里，用一条细线隔开 */
+/* 最近：日志式的行，细线分隔 */
 .ask-history {
-  margin-top: 34px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
-  text-align: left;
+  margin-top: 52px;
 }
 
 .history-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 2px 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
   /* 留着确认按钮那点高度：切到「清空全部？」时这一行不会往上蹿 */
   min-height: 20px;
-  font-size: 10.5px;
-  letter-spacing: 0.8px;
+  font-size: 11px;
+  letter-spacing: 1.1px;
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -965,11 +1031,6 @@ button {
   flex-direction: column;
 }
 
-/* 间距用 margin 而不是 gap：删掉一条时要能把它一起收掉，gap 收不动 */
-.history-list .record-card + .record-card {
-  margin-top: 8px;
-}
-
 /* 等待内容时的中间占位 */
 .stage-dot {
   width: 7px;
@@ -988,6 +1049,12 @@ button {
   margin-top: 14px;
   font-size: 12px;
   color: #b3261e;
+}
+
+.ask-foot {
+  margin-top: 50px;
+  font-size: 11px;
+  color: var(--faint);
 }
 
 /* ---- 关系图：靠换行，不靠横向滚动 ---- */
@@ -2061,39 +2128,48 @@ button {
   background: #fff;
 }
 
-/* ---- 「最近」里的一条记录 ---- */
-.record-card {
-  position: relative;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
+/* ---- 「最近」里的一条：日志行，不是卡片 ---- */
+.line {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.16s var(--ease);
+}
+
+.line:hover {
   background: #fff;
-  box-shadow: var(--shadow);
-  text-align: left;
+}
+
+.line-open {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  /* 高度只由正文决定：确认那层是浮在上面的，切状态不会把卡片撑高或压扁 */
-  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease),
-    background 0.18s var(--ease);
+  padding: 13px 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.record-body {
-  flex: 1;
-  min-width: 0;
+/* 已完成打勾，没做完留一个点 */
+.line .ok {
+  width: 20px;
+  flex: 0 0 20px;
+  font-size: 11px;
+  color: #2f7a3f;
 }
 
-.record-title {
-  display: block;
-  font-size: 10.5px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
+.line .ok.wait {
   color: var(--faint);
 }
 
-.record-text {
-  display: block;
-  margin-top: 4px;
+.line .t {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   color: var(--ink);
   overflow: hidden;
@@ -2101,93 +2177,69 @@ button {
   white-space: nowrap;
 }
 
-.record-open {
-  text-align: left;
-  cursor: pointer;
+.line .meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--faint);
 }
 
-.record-actions {
+.line .acts {
   flex: 0 0 auto;
   display: flex;
-  gap: 4px;
-  margin-left: auto;
+  gap: 10px;
+  padding: 0 2px;
   opacity: 0;
-  transform: translateX(4px);
+  /* 没露出来的时候别接点击，否则会点到看不见的"删除" */
   pointer-events: none;
-  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+  transition: opacity 0.16s var(--ease);
 }
 
-.record-card:hover .record-actions,
-.record-card:focus-within .record-actions {
+.line:hover .acts,
+.line:focus-within .acts {
   opacity: 1;
-  transform: none;
   pointer-events: auto;
 }
 
-.record-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--muted);
-  transition: background 0.15s var(--ease), color 0.15s var(--ease),
-    transform 0.12s var(--ease);
+.line .acts button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color 0.15s var(--ease);
 }
 
-/* 按下时缩一点：点得动的手感，别只有变大变小 */
-.record-icon:active {
-  transform: scale(0.9);
-}
-
-.record-icon svg {
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.record-icon:hover {
-  background: rgba(0, 0, 0, 0.05);
+.line .acts button:hover {
   color: var(--ink);
 }
 
-.record-icon.danger:hover {
-  background: rgba(179, 38, 30, 0.08);
+.line .acts button.danger:hover {
   color: #b3261e;
 }
 
 /* 点了删除就淡出并收掉高度，260ms 后才真的从列表里拿掉 */
-.record-card.removing {
-  animation: record-remove 0.26s var(--ease) forwards;
+.line.removing {
+  animation: line-remove 0.26s var(--ease) forwards;
   pointer-events: none;
   overflow: hidden;
 }
 
-@keyframes record-remove {
+@keyframes line-remove {
   from {
-    max-height: 96px;
+    max-height: 60px;
   }
   to {
     opacity: 0;
-    transform: translateY(-4px);
     max-height: 0;
-    margin-top: 0;
-    padding-top: 0;
-    padding-bottom: 0;
     border-color: transparent;
-    box-shadow: none;
   }
 }
 
 @media (hover: none) {
-  .record-actions {
+  .line .acts {
     opacity: 1;
-    transform: none;
-    pointer-events: auto;
   }
 }
 

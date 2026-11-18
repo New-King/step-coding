@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A · 极简居中</title>
+    <style>
+      :root {
+        --page: #f6f6f7;
+        --card: #fff;
+        --ink: #111113;
+        --ink-soft: #3a3a3c;
+        --muted: #86868b;
+        --faint: #b0b0b6;
+        --line: rgba(0, 0, 0, 0.08);
+        --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--page);
+        color: var(--ink);
+        font: 14px/1.6 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        min-height: 100%;
+        display: grid;
+        place-items: center;
+        padding: 72px 24px 88px;
+      }
+      .col { width: 100%; max-width: 620px; text-align: center; }
+
+      .mark {
+        width: 52px; height: 52px; border-radius: 14px;
+        background: var(--ink); position: relative; margin: 0 auto 26px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+      }
+      .mark::after {
+        content: ""; position: absolute; inset: 15px;
+        border-radius: 4px; background: rgba(255, 255, 255, 0.9);
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        font-size: 46px; font-weight: 600;
+        letter-spacing: -1.6px; line-height: 1.1;
+      }
+      .sub {
+        margin: 0 0 34px; font-size: 15.5px; line-height: 1.75; color: var(--muted);
+      }
+
+      /* 输入框 */
+      .composer {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 10px 10px 22px;
+        background: var(--card);
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(0, 0, 0, 0.04);
+        transition: box-shadow 0.2s var(--ease);
+      }
+      .composer:hover { box-shadow: 0 14px 38px rgba(0, 0, 0, 0.09), 0 1px 2px rgba(0, 0, 0, 0.04); }
+      .composer textarea {
+        flex: 1; min-width: 0; border: 0; outline: 0; resize: none;
+        background: transparent; font: inherit; font-size: 15px; line-height: 1.5;
+        padding: 12px 0; max-height: 132px; color: var(--ink);
+      }
+      .send {
+        width: 40px; height: 40px; flex: 0 0 40px; border: 0; border-radius: 50%;
+        background: var(--ink); color: #fff; font-size: 16px; cursor: pointer;
+        display: grid; place-items: center; transition: transform 0.16s var(--ease), background 0.16s var(--ease);
+      }
+      .send:hover { background: #333; }
+      .send:active { transform: scale(0.94); }
+
+      /* 示例：一行慢慢走 */
+      .examples {
+        margin: 20px 0 0;
+        overflow: hidden;
+        mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+        -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+      }
+      .track { display: flex; width: max-content; animation: marquee 46s linear infinite; }
+      .set { display: flex; gap: 9px; padding-right: 9px; flex: none; }
+      .chip {
+        flex: none; white-space: nowrap;
+        padding: 9px 17px; border: 0; border-radius: 999px;
+        background: var(--card); color: var(--ink-soft);
+        font: inherit; font-size: 13.5px; cursor: pointer;
+        transition: background 0.18s var(--ease), color 0.18s var(--ease);
+      }
+      .chip:hover { background: #e9e9ee; color: var(--ink); }
+      @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+      /* 最近 */
+      .recent { margin-top: 46px; text-align: left; }
+      .recent-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding-bottom: 12px; border-bottom: 1px solid var(--line);
+        font-size: 11px; letter-spacing: 1.1px; text-transform: uppercase; color: var(--faint);
+      }
+      .recent-head button {
+        border: 0; background: none; font: inherit; font-size: 11px;
+        letter-spacing: 0.4px; text-transform: none; color: var(--muted); cursor: pointer;
+        transition: color 0.16s var(--ease);
+      }
+      .recent-head button:hover { color: var(--ink); }
+
+      .row {
+        display: flex; align-items: center; gap: 14px;
+        padding: 16px 6px; border-bottom: 1px solid var(--line);
+        cursor: pointer; transition: background 0.16s var(--ease);
+      }
+      .row:hover { background: rgba(0, 0, 0, 0.018); }
+      .row-main { flex: 1; min-width: 0; }
+      .row-state {
+        display: block; font-size: 10.5px; letter-spacing: 0.8px;
+        text-transform: uppercase; color: var(--faint);
+      }
+      .row-state.done { color: #6f9c72; }
+      .row-text {
+        display: block; margin-top: 5px; font-size: 14px; color: var(--ink);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .acts { display: flex; gap: 4px; opacity: 0; transform: translateX(6px); transition: 0.18s var(--ease); }
+      .row:hover .acts, .row:focus-within .acts { opacity: 1; transform: none; }
+      .acts button {
+        width: 30px; height: 30px; border: 0; border-radius: 8px; background: none;
+        color: var(--muted); cursor: pointer; display: grid; place-items: center;
+        transition: background 0.15s var(--ease), color 0.15s var(--ease), transform 0.12s var(--ease);
+      }
+      .acts button:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+      .acts button.danger:hover { background: rgba(179, 38, 30, 0.08); color: #b3261e; }
+      .acts button:active { transform: scale(0.9); }
+      .acts svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="col">
+        <div class="mark"></div>
+        <h1>Take your time</h1>
+        <p class="sub">先想、再看、再问、再动手——每一步都留在屏幕上。</p>
+
+        <div class="composer">
+          <textarea rows="1"></textarea>
+          <button class="send" aria-label="发送">→</button>
+        </div>
+
+        <div class="examples">
+          <div class="track">
+            <div class="set">
+              <button class="chip">登录注册是怎么回事</button>
+              <button class="chip">function call 怎么调起来的</button>
+              <button class="chip">LangGraph 的节点怎么串</button>
+              <button class="chip">快速排序为什么快</button>
+              <button class="chip">爬虫怎么抓到数据</button>
+              <button class="chip">批量改文件名靠什么</button>
+              <button class="chip">单元测试在测什么</button>
+              <button class="chip">Docker 到底做了什么</button>
+            </div>
+            <div class="set" aria-hidden="true">
+              <button class="chip" tabindex="-1">登录注册是怎么回事</button>
+              <button class="chip" tabindex="-1">function call 怎么调起来的</button>
+              <button class="chip" tabindex="-1">LangGraph 的节点怎么串</button>
+              <button class="chip" tabindex="-1">快速排序为什么快</button>
+              <button class="chip" tabindex="-1">爬虫怎么抓到数据</button>
+              <button class="chip" tabindex="-1">批量改文件名靠什么</button>
+              <button class="chip" tabindex="-1">单元测试在测什么</button>
+              <button class="chip" tabindex="-1">Docker 到底做了什么</button>
+            </div>
+          </div>
+        </div>
+
+        <section class="recent">
+          <div class="recent-head">
+            <span>最近</span>
+            <button>清空</button>
+          </div>
+          <div class="row">
+            <div class="row-main">
+              <span class="row-state done">已完成</span>
+              <span class="row-text">登录注册是怎么回事</span>
+            </div>
+            <div class="acts">
+              <button aria-label="继续修改"><svg viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg></button>
+              <button class="danger" aria-label="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg></button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-main">
+              <span class="row-state done">已完成</span>
+              <span class="row-text">function call 怎么调起来的</span>
+            </div>
+            <div class="acts">
+              <button aria-label="继续修改"><svg viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg></button>
+              <button class="danger" aria-label="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg></button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-main">
+              <span class="row-state">未完成</span>
+              <span class="row-text">爬虫怎么抓到数据</span>
+            </div>
+            <div class="acts">
+              <button aria-label="继续修改"><svg viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg></button>
+              <button class="danger" aria-label="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg></button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </body>
+</html>
