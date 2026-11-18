@@ -110,11 +110,31 @@ const EMPTY: Snapshot = {
   finished: false,
 };
 
+/**
+ * 首页那几个「想弄懂什么」。
+ *
+ * 口气是「我真有这个问题」，不用命令式，也**别用一个句式套到底**——
+ * 八条都写成「我想了解下 X 原理」一眼就是模型生成的。
+ * `label` 是按钮上的字，`ask` 是点下去真正发出去的那句。
+ */
 const EXAMPLES: { label: string; ask: string }[] = [
-  { label: "useEffect 执行时机", ask: "React 的 useEffect 到底什么时候执行" },
-  { label: "中间件怎么串起来", ask: "后端的中间件是怎么串起来的" },
-  { label: "写一个登录页", ask: "帮我写一个登录页面" },
-  { label: "镜像分层怎么回事", ask: "Docker 的镜像分层是怎么回事" },
+  { label: "登录注册是怎么回事", ask: "登录注册到底是怎么回事？从输入到登录成功，中间都发生了什么" },
+  {
+    label: "function call 怎么调起来的",
+    ask: "function call 到底是怎么调起来的？模型怎么就能调用到真实函数，写个最小例子看看",
+  },
+  {
+    label: "LangGraph 的节点怎么串",
+    ask: "LangGraph 的节点是怎么串起来跑的？用 TypeScript 写个最小例子",
+  },
+  { label: "快速排序为什么快", ask: "快速排序为什么快？想看它一步步把数组划分开的过程" },
+  { label: "爬虫怎么抓到数据", ask: "爬虫是怎么抓到网页数据的？从发请求到存成表格，中间做了什么" },
+  {
+    label: "批量改文件名靠什么",
+    ask: "批量改文件名这种活儿靠什么做的？脚本怎么遍历目录、再一个个改名",
+  },
+  { label: "单元测试在测什么", ask: "单元测试到底在测什么？一个函数是怎么被测试覆盖住的" },
+  { label: "Docker 到底做了什么", ask: "Docker 到底做了什么？Dockerfile 每一行在干什么" },
 ];
 
 const HISTORY_KEY = "stepcoding.history.v2";
@@ -395,18 +415,17 @@ export default function App() {
       const saved = raw ? (JSON.parse(raw) as SavedSession) : null;
       if (saved && Array.isArray(saved.items) && saved.items.length > 0) {
         hasSaved = true;
-        // 没做完的现场也进「最近」：只剩一份列表，不再单独挂一张卡
-        if (!projectDone(saved.items)) {
-          const firstUser = saved.items.find((i) => i.ev.action === "user");
-          upsertHistory({
-            id: saved.id,
-            title: firstUser?.ev.action === "user" ? titleOf(firstUser.ev.text) : "一个项目",
-            items: saved.items,
-            files: saved.files ?? {},
-            base: {},
-            round: saved.round ?? 0,
-          });
-        }
+        // 现场一律补进「最近」，不按做完没做完分：收尾走 say / 报错 / 步数上限时
+        // 没人调 remember()，只补「没做完」的话刷新后这条记录就没了。
+        const firstUser = saved.items.find((i) => i.ev.action === "user");
+        upsertHistory({
+          id: saved.id,
+          title: firstUser?.ev.action === "user" ? titleOf(firstUser.ev.text) : "一个项目",
+          items: saved.items,
+          files: saved.files ?? {},
+          base: {},
+          round: saved.round ?? 0,
+        });
       }
     } catch {
       /* 读不出来就算了 */
@@ -777,14 +796,23 @@ export default function App() {
       const rest = prev.filter((_, i) => i !== same);
       let next = [merged, ...rest].slice(0, 6);
 
-      // 浏览器给每个站点约 5MB，塞不下就把最旧的挤掉再试
-      while (next.length > 1) {
+      // 浏览器给每个站点约 5MB：塞不下就把最旧的挤掉。留下的这批要同时写进本地，
+      // 界面和存储别不一样——否则这里显示着的记录，刷新一下就成了"又没了"。
+      let saved = false;
+      for (let n = next.length; n >= 1; n -= 1) {
+        const list = next.slice(0, n);
         try {
-          localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+          next = list;
+          saved = true;
           break;
         } catch {
-          next = next.slice(0, -1);
+          /* 还塞不下就再少留一条 */
         }
+      }
+      if (!saved) {
+        // 连一条都写不进去：界面照常显示，但刷新后会丢，至少日志里留个痕
+        console.warn("[step-coding] 「最近」写不进本地存储，这条刷新后会丢");
       }
       return next;
     });
@@ -907,6 +935,9 @@ export default function App() {
   const stopRun = () => {
     statusRef.current = "done";
     setRunning(false);
+    // 回话 / 拒绝收尾也要进「最近」：以前只有 finish 和 返回 才 remember，
+    // 聊完直接刷新，这条记录就没进过列表。
+    if (itemsRef.current.length > 0) remember(filesRef.current);
     saveSession();
     note("stop", "本轮结束");
   };
@@ -1404,7 +1435,8 @@ export default function App() {
     downloadZip("step-coding.zip", entries);
   };
 
-  const composer = (placeholder: string) => (
+  /** 输入框不带任何占位文字：想说什么自己写，别用一句"说一句"教人说话 */
+  const composer = () => (
     <div className={`composer ${running ? "busy" : ""}`}>
       <textarea
         ref={composerRef}
@@ -1416,7 +1448,6 @@ export default function App() {
             void send(question);
           }
         }}
-        placeholder={running ? "正在跑，先点暂停再说话" : placeholder}
         rows={1}
         disabled={running}
         autoFocus
@@ -1441,15 +1472,27 @@ export default function App() {
           <div className="ask-inner">
             <div className="ask-mark" />
             <h1>想弄懂什么？</h1>
-            <p>说一句。它会先想、再看、再问、再动手——你能看清每一步。</p>
+            <p>它会先想、再看、再问、再动手——每一步都摆在你眼前。</p>
+            {/* 一行走马灯：内容放两份首尾相接，走完一份正好接上 */}
             <div className="ask-examples">
-              {EXAMPLES.map((item) => (
-                <button key={item.ask} className="ask-chip" onClick={() => void start(item.ask)}>
-                  {item.label}
-                </button>
-              ))}
+              <div className="ask-track">
+                {[0, 1].map((copy) => (
+                  <div className="ask-set" key={copy} aria-hidden={copy === 1}>
+                    {EXAMPLES.map((item) => (
+                      <button
+                        key={item.ask}
+                        className="ask-chip"
+                        tabIndex={copy === 1 ? -1 : 0}
+                        onClick={() => void start(item.ask)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
-            {composer("说一句…")}
+            {composer()}
 
             {declined && (
               <div className="decline-card">
@@ -1844,7 +1887,7 @@ export default function App() {
 
           </div>
           <div className="chat-foot">
-            {composer(pending ? "回答上面的问题，或直接写…" : "")}
+            {composer()}
           </div>
         </aside>
       </main>
