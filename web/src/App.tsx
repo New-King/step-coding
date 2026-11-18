@@ -214,7 +214,8 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [peek, setPeek] = useState<string | null>(null);
   /** 「最近」里正在等二次确认的那条：点垃圾桶先变出对勾 / 叉，别一下就删 */
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  /** 「清空」要不要再问一句：单条删除不问，点了就删 */
+  const [confirmClear, setConfirmClear] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [traceQuery, setTraceQuery] = useState("");
   const [traceOpen, setTraceOpen] = useState(
@@ -271,6 +272,8 @@ export default function App() {
   const codeRef = useRef<HTMLDivElement | null>(null);
   const logStickRef = useRef(true);
   const codeStickRef = useRef(true);
+  /** 上一次由「自动跟随」设上去的 scrollTop：落在这个位置上的 scroll 事件不是用户翻页 */
+  const codeAutoTopRef = useRef(-1);
 
   /** 拍一张当前现场的快照 */
   const snapshot = (): SavedSession => ({
@@ -1211,14 +1214,22 @@ export default function App() {
     }
   };
 
-  /** 二次确认后真的删：先让这行淡出，再从「最近」里拿掉，免得点完啪一下没了 */
+  /** 点删除就删：先让这行淡出收掉高度，再从「最近」里拿掉，免得啪一下没了 */
   const commitDelete = (item: HistoryItem) => {
-    setConfirmId(null);
     setRemovingId(item.id);
     window.setTimeout(() => {
       setRemovingId(null);
       void removeHistory(item);
     }, 260);
+  };
+
+  /** 清空「最近」：本地记录和现场快照一起清掉 */
+  const clearHistory = () => {
+    localStorage.removeItem(HISTORY_KEY);
+    localStorage.removeItem(SESSION_KEY);
+    setHistory([]);
+    setConfirmClear(false);
+    note("history.clear", "清空最近");
   };
 
   /* ------------------------------------------------------------ 展示 */
@@ -1398,7 +1409,9 @@ export default function App() {
   // 代码区：一边写一边往下跟，同样尊重手动滚动
   useEffect(() => {
     const el = codeRef.current;
-    if (el && codeStickRef.current) el.scrollTop = el.scrollHeight;
+    if (!el || !codeStickRef.current) return;
+    el.scrollTop = el.scrollHeight;
+    codeAutoTopRef.current = el.scrollTop;
   }, [code]);
 
   // 换文件时回到开头看
@@ -1407,6 +1420,7 @@ export default function App() {
     if (!el) return;
     codeStickRef.current = true;
     el.scrollTop = 0;
+    codeAutoTopRef.current = 0;
   }, [activeFile]);
 
   const copy = async () => {
@@ -1471,8 +1485,8 @@ export default function App() {
         <div className="ask-hero">
           <div className="ask-inner">
             <div className="ask-mark" />
-            <h1>想弄懂什么？</h1>
-            <p>它会先想、再看、再问、再动手——每一步都摆在你眼前。</p>
+            <h1>Take your time</h1>
+            <p>先想、再看、再问、再动手——每一步都留在屏幕上。</p>
             {/* 一行走马灯：内容放两份首尾相接，走完一份正好接上 */}
             <div className="ask-examples">
               <div className="ask-track">
@@ -1522,92 +1536,71 @@ export default function App() {
               <section className="ask-history">
                 <div className="history-title">
                   <span>最近</span>
-                  <button
-                    className="history-clear"
-                    onClick={() => {
-                      localStorage.removeItem(HISTORY_KEY);
-                      localStorage.removeItem(SESSION_KEY);
-                      setHistory([]);
-                    }}
-                  >
-                    清空
-                  </button>
+                  {confirmClear ? (
+                    <span className="history-confirm">
+                      清空全部？
+                      <button
+                        className="history-icon danger"
+                        onClick={clearHistory}
+                        title="确认清空"
+                        aria-label="确认清空"
+                      >
+                        <CheckIcon />
+                      </button>
+                      <button
+                        className="history-icon"
+                        onClick={() => setConfirmClear(false)}
+                        title="取消"
+                        aria-label="取消清空"
+                      >
+                        <XIcon />
+                      </button>
+                    </span>
+                  ) : (
+                    <button className="history-clear" onClick={() => setConfirmClear(true)}>
+                      清空
+                    </button>
+                  )}
                 </div>
                 <div className="history-list">
                   {history.map((item) => (
                     <div
                       key={item.id}
-                      className={`record-card ${confirmId === item.id ? "confirming" : ""} ${
-                        removingId === item.id ? "removing" : ""
-                      }`}
+                      className={`record-card ${removingId === item.id ? "removing" : ""}`}
                     >
-                      {confirmId === item.id ? (
-                        <>
-                          <span className="record-confirm">
-                            删除「{item.title || "这条记录"}」？文件也一起清掉
-                          </span>
-                          <div className="record-confirm-actions">
-                            <button
-                              className="record-icon danger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                commitDelete(item);
-                              }}
-                              title="确认删除"
-                              aria-label="确认删除"
-                            >
-                              <CheckIcon />
-                            </button>
-                            <button
-                              className="record-icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmId(null);
-                              }}
-                              title="取消"
-                              aria-label="取消删除"
-                            >
-                              <XIcon />
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            className="record-body record-open"
-                            onClick={() => void openHistory(item)}
-                          >
-                            <span className="record-title">
-                              {projectDone(item.items) ? "已完成" : "未完成"}
-                            </span>
-                            <span className="record-text">{item.title || "最近一次"}</span>
-                          </button>
-                          <div className="record-actions">
-                            <button
-                              className="record-icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void openHistory(item);
-                              }}
-                              title="继续修改"
-                              aria-label="继续修改"
-                            >
-                              <PencilIcon />
-                            </button>
-                            <button
-                              className="record-icon danger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmId(item.id);
-                              }}
-                              title="删除"
-                              aria-label="删除"
-                            >
-                              <TrashIcon />
-                            </button>
-                          </div>
-                        </>
-                      )}
+                      <button
+                        className="record-body record-open"
+                        onClick={() => void openHistory(item)}
+                      >
+                        <span className="record-title">
+                          {projectDone(item.items) ? "已完成" : "未完成"}
+                        </span>
+                        <span className="record-text">{item.title || "最近一次"}</span>
+                      </button>
+                      <div className="record-actions">
+                        <button
+                          className="record-icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openHistory(item);
+                          }}
+                          title="继续修改"
+                          aria-label="继续修改"
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="record-icon danger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            commitDelete(item);
+                          }}
+                          title="删除"
+                          aria-label="删除"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1742,7 +1735,10 @@ export default function App() {
               ref={codeRef}
               onScroll={() => {
                 const el = codeRef.current;
-                if (el) codeStickRef.current = nearBottom(el);
+                if (!el) return;
+                // 自己刚滚到过的位置：这次事件是跟随造成的，不是用户往上翻
+                if (Math.abs(el.scrollTop - codeAutoTopRef.current) < 2) return;
+                codeStickRef.current = nearBottom(el);
               }}
             >
               {code ? (

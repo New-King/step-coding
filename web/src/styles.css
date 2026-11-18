@@ -554,7 +554,7 @@ button {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 8px 8px 8px 16px;
+  padding: 10px 10px 10px 18px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -575,16 +575,16 @@ button {
   resize: none;
   background: transparent;
   color: var(--ink);
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.6;
-  padding: 7px 0;
+  padding: 8px 0;
   max-height: 132px;
 }
 
 .composer-send {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
@@ -751,14 +751,14 @@ button {
 .ask-chip {
   flex: none;
   white-space: nowrap;
-  padding: 6px 13px;
+  padding: 8px 16px;
   border-radius: 999px;
   /* 不要边框：白底压在浅灰页面上已经够分得开，加一道线反而显脏 */
   border: 0;
   background: var(--card);
   color: var(--ink-soft);
-  font-size: 12px;
-  transition: all 0.2s var(--ease);
+  font-size: 13px;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease);
 }
 
 /* 底色本来是白的，hover 再写 #fff 等于没变化——这里是唯一能看到"按下去过"的地方 */
@@ -782,45 +782,47 @@ button {
   /* safe center：内容比窗口高时从顶部开始，不会被居中挤掉上半截 */
   align-items: safe center;
   justify-items: center;
-  padding: 40px 24px 56px;
+  padding: 56px 24px 64px;
 }
 
 
 .ask-inner {
   width: 100%;
-  max-width: 520px;
+  max-width: 600px;
   text-align: center;
   display: flex;
   flex-direction: column;
 }
 
 .ask-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
   background: var(--accent);
   position: relative;
-  margin: 0 auto 16px;
+  margin: 0 auto 22px;
 }
 
 .ask-mark::after {
   content: "";
   position: absolute;
-  inset: 12px;
-  border-radius: 3px;
+  inset: 14px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.85);
 }
 
 .ask-inner h1 {
-  margin: 0 0 7px;
-  font-size: 22px;
+  margin: 0 0 10px;
+  font-size: 34px;
   font-weight: 600;
-  letter-spacing: -0.4px;
+  letter-spacing: -0.9px;
+  line-height: 1.2;
 }
 
 .ask-inner p {
-  margin: 0 0 22px;
-  font-size: 13px;
+  margin: 0 0 26px;
+  font-size: 15px;
+  line-height: 1.7;
   color: var(--muted);
 }
 
@@ -870,8 +872,8 @@ button {
 
 /* 最近：跟在输入框下面同一列里，用一条细线隔开 */
 .ask-history {
-  margin-top: 28px;
-  padding-top: 20px;
+  margin-top: 34px;
+  padding-top: 22px;
   border-top: 1px solid var(--line);
   text-align: left;
 }
@@ -881,6 +883,8 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 0 2px 8px;
+  /* 留着确认按钮那点高度：切到「清空全部？」时这一行不会往上蹿 */
+  min-height: 20px;
   font-size: 10.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -898,10 +902,72 @@ button {
   color: var(--ink);
 }
 
+/* 清空要再问一句：就地变出「清空全部？✓ ✕」，不弹窗、不换行高 */
+.history-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  animation: history-confirm-in 0.16s var(--ease) both;
+}
+
+@keyframes history-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.history-icon {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+  transition: background 0.15s var(--ease), color 0.15s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+.history-icon:active {
+  transform: scale(0.9);
+}
+
+.history-icon svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.history-icon:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+}
+
+.history-icon.danger:hover {
+  background: rgba(179, 38, 30, 0.08);
+  color: #b3261e;
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+}
+
+/* 间距用 margin 而不是 gap：删掉一条时要能把它一起收掉，gap 收不动 */
+.history-list .record-card + .record-card {
+  margin-top: 8px;
 }
 
 /* 等待内容时的中间占位 */
@@ -1997,6 +2063,7 @@ button {
 
 /* ---- 「最近」里的一条记录 ---- */
 .record-card {
+  position: relative;
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
@@ -2006,6 +2073,9 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* 高度只由正文决定：确认那层是浮在上面的，切状态不会把卡片撑高或压扁 */
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease),
+    background 0.18s var(--ease);
 }
 
 .record-body {
@@ -2061,7 +2131,13 @@ button {
   place-items: center;
   border-radius: 8px;
   color: var(--muted);
-  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  transition: background 0.15s var(--ease), color 0.15s var(--ease),
+    transform 0.12s var(--ease);
+}
+
+/* 按下时缩一点：点得动的手感，别只有变大变小 */
+.record-icon:active {
+  transform: scale(0.9);
 }
 
 .record-icon svg {
@@ -2084,51 +2160,26 @@ button {
   color: #b3261e;
 }
 
-/* ---- 删除二次确认：整行换成「删除？+ 对勾 / 叉」，不再一下删掉 ---- */
-.record-card.confirming {
-  border-color: rgba(179, 38, 30, 0.22);
-  box-shadow: 0 0 0 3px rgba(179, 38, 30, 0.06);
-}
-
-.record-confirm {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  animation: confirm-in 0.18s var(--ease) both;
-}
-
-.record-confirm-actions {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 4px;
-  animation: confirm-in 0.18s var(--ease) both;
-}
-
-@keyframes confirm-in {
-  from {
-    opacity: 0;
-    transform: translateX(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* 确认后整行淡出，260ms 后才真的从列表里拿掉 */
+/* 点了删除就淡出并收掉高度，260ms 后才真的从列表里拿掉 */
 .record-card.removing {
   animation: record-remove 0.26s var(--ease) forwards;
   pointer-events: none;
+  overflow: hidden;
 }
 
 @keyframes record-remove {
+  from {
+    max-height: 96px;
+  }
   to {
     opacity: 0;
-    transform: translateX(10px);
+    transform: translateY(-4px);
+    max-height: 0;
+    margin-top: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-color: transparent;
+    box-shadow: none;
   }
 }
 
