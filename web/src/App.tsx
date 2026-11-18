@@ -46,12 +46,20 @@ type Item = {
   pending?: boolean;
 };
 
+/**
+ * 这一场停在哪种状态：
+ * running 正在跑 / waiting 等用户回答 / paused 中途停了还能接着跑 / done 收尾了
+ */
+type RunStatus = "running" | "waiting" | "paused" | "done";
+
 /** 本地留的现场：刷新后能把这一场重新塞回「最近」所需的最小信息 */
 type SavedSession = {
   id: string;
   items: Item[];
   files: Record<string, string>;
   round: number;
+  /** 停在哪一步：回来时据此决定是「接着跑」还是「已经结束」 */
+  status?: RunStatus;
 };
 
 type HistoryItem = {
@@ -63,6 +71,8 @@ type HistoryItem = {
   files: Record<string, string>;
   round?: number;
   updatedAt?: number;
+  /** 老记录没有这一项：按「已完成」处理 */
+  status?: RunStatus;
 };
 
 const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
@@ -314,12 +324,16 @@ export default function App() {
   /** 上一次由「自动跟随」设上去的 scrollTop：落在这个位置上的 scroll 事件不是用户翻页 */
   const codeAutoTopRef = useRef(-1);
 
+  /** 对外记录用的状态：idle 还没开场，按「已完成」算 */
+  const currentStatus = (): RunStatus => (statusRef.current === "idle" ? "done" : statusRef.current);
+
   /** 拍一张当前现场的快照 */
   const snapshot = (): SavedSession => ({
     id: sessionIdRef.current,
     items: itemsRef.current,
     files: filesRef.current,
     round: seqRef.current,
+    status: currentStatus(),
   });
 
   /** 把现场存下来：刷新后还能在「最近」里找回这一场。 */
@@ -460,14 +474,24 @@ export default function App() {
         // 现场一律补进「最近」，不按做完没做完分：收尾走 say / 报错 / 步数上限时
         // 没人调 remember()，只补「没做完」的话刷新后这条记录就没了。
         const firstUser = saved.items.find((i) => i.ev.action === "user");
-        upsertHistory({
+        // 刷新时循环已经断了：正在跑的改记成「暂停」，回来点播放接着跑
+        const st: RunStatus = saved.status === "running" ? "paused" : (saved.status ?? "done");
+        const entry: HistoryItem = {
           id: saved.id,
           title: firstUser?.ev.action === "user" ? titleOf(firstUser.ev.text) : "一个项目",
+          summary: "",
           items: saved.items,
           files: saved.files ?? {},
           base: {},
           round: saved.round ?? 0,
-        });
+          updatedAt: Date.now(),
+          status: st,
+        };
+        upsertHistory(entry);
+        // 上一次跑到一半就刷新 / 关页：直接回到现场停在那一版，别让人再从首页找回来
+        if (st === "paused" || st === "waiting") {
+          window.setTimeout(() => void openHistory(entry), 60);
+        }
       }
     } catch {
       /* 读不出来就算了 */
@@ -630,6 +654,8 @@ export default function App() {
 
         const stop = handleEvent(res.event as Event);
         note("pump", `event=${res.event?.action} stop=${stop}`);
+        // 每走一步就落一次现场：刷新 / 退出时丢掉的最多只是正在演的这一小段
+        saveSession();
         if (stop) break;
       }
     } catch (e) {
@@ -827,8 +853,15 @@ export default function App() {
   const upsertHistory = (entry: Omit<HistoryItem, "summary" | "updatedAt">) => {
     setHistory((prev) => {
       const same = prev.findIndex((x) => x.id === entry.id);
-      // 没有新动作就别动它：只是打开看一眼，不该跳到最前面
-      if (same >= 0 && prev[same].items.length === entry.items.length) return prev;
+      // 没有新动作就别动它：只是打开看一眼，不该跳到最前面；
+      // 但「跑完 / 中途停」这种状态变化要写进去，否则回来还是旧状态
+      if (
+        same >= 0 &&
+        prev[same].items.length === entry.items.length &&
+        prev[same].status === entry.status
+      ) {
+        return prev;
+      }
       const merged: HistoryItem = {
         ...entry,
         summary: summarize(entry.files),
@@ -874,6 +907,7 @@ export default function App() {
       base: startFilesRef.current,
       files,
       round: seqRef.current,
+      status: currentStatus(),
     });
   };
 
@@ -1051,15 +1085,28 @@ export default function App() {
       return;
     }
 
-    // 中途返回：这一场也记进「最近」，没做完就标未完成，下次点开接着做
-    if (itemsRef.current.length > 0) remember(filesRef.current);
-    stopRun();
+    // 中途返回：这一场也记进「最近」。跑了一半的记成「暂停」而不是「结束」——
+    // 这样再点进来还是停下的样子，点播放能接着跑；等回答的仍记「等回答」。
+    if (itemsRef.current.length > 0) {
+      if (statusRef.current === "running") statusRef.current = "paused";
+      setRunning(false);
+      remember(filesRef.current);
+      saveSession();
+      note("home", `现场留着：${statusRef.current}`);
+    }
     setStarted(false);
   };
 
   const togglePause = () => {
     const p = playerRef.current!;
     const next = !p.paused;
+
+    // 收尾了 / 还没开场：没有「暂停 · 继续」这回事，别按出一个新请求
+    if (!replayingRef.current && statusRef.current !== "running" && statusRef.current !== "paused") {
+      note("pause", "这一轮已经停下，忽略");
+      return;
+    }
+
     p.paused = next;
     setPaused(next);
 
@@ -1074,6 +1121,8 @@ export default function App() {
       setRunning(false);
       note("pause", "暂停循环与播放");
     } else {
+      // 从「最近」点回来接着跑：计时重新起，不然状态行还挂着上一次的秒数
+      if (!runStartRef.current) resetRunClock();
       statusRef.current = "running";
       setRunning(true);
       note("resume", "继续");
@@ -1155,10 +1204,14 @@ export default function App() {
   /** 打开「最近」里的旧项目：先和服务端对齐 seq / messages / files。 */
   const openHistory = async (item: HistoryItem) => {
     const player = playerRef.current!;
+    // 拉起来是「接着跑」还是「已经结束」，全看这条记录当时停在哪
+    const st: RunStatus = item.status ?? "done";
+    const resumable = st === "paused" || st === "running";
+
     player.stop();
-    player.paused = false;
+    player.paused = resumable;
     afterPlayerRef.current = null;
-    setPaused(false);
+    setPaused(resumable);
     setStarted(true);
     setError(null);
     setDeclined(null);
@@ -1167,7 +1220,7 @@ export default function App() {
     setAskAnswers([]);
     setAnswer("");
     setRunning(false);
-    statusRef.current = "done";
+    statusRef.current = resumable ? "paused" : st === "waiting" ? "waiting" : "done";
     runStartRef.current = 0;
     setElapsed(0);
     sessionIdRef.current = item.id;
@@ -1186,8 +1239,17 @@ export default function App() {
       ...EMPTY,
       buffers: item.files,
       active: Object.keys(item.files)[0] ?? null,
-      finished: true,
+      // 没跑完的别显示成「已完成」：代码停在离开时那一版
+      finished: st === "done",
     });
+
+    // 停在「等回答」上：把那个问题原样摆回来
+    if (st === "waiting") {
+      const lastAsk = [...items].reverse().find((it) => it.ev.action === "ask");
+      if (lastAsk && lastAsk.ev.action === "ask") {
+        setPending(lastAsk.ev.questions);
+      }
+    }
 
     let sync: { seq?: number; files?: Record<string, string> } | null = null;
 
@@ -1542,7 +1604,7 @@ export default function App() {
 
   if (!started) {
     return (
-      <div className="ask">
+      <div className="ask-page">
         <div className="ask-hero">
           <div className="ask-inner">
             <div className="ask-top">
@@ -2203,7 +2265,12 @@ function liveStatusOf(
     }
   }
 
-  return paused ? `已暂停 · ${label}` : label;
+  if (!paused) return label;
+  // 暂停时别再说「正在编写」：那种半截状态其实是「停在某个文件上」
+  if (live && (live.ev.action === "write" || live.ev.action === "edit" || live.ev.action === "delete")) {
+    return `已暂停 · 停在 ${live.ev.path}`;
+  }
+  return `已暂停 · ${label}`;
 }
 
 function hostOf(url: string) {

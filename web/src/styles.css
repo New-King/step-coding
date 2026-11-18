@@ -671,7 +671,7 @@ html[data-theme="dark"] .ask-answered {
 .code:hover::-webkit-scrollbar-thumb,
 .files:hover::-webkit-scrollbar-thumb,
 .chat-log:hover::-webkit-scrollbar-thumb,
-.ask:hover::-webkit-scrollbar-thumb {
+.ask-page:hover::-webkit-scrollbar-thumb {
   background: var(--line-strong);
 }
 
@@ -1072,7 +1072,7 @@ html[data-theme="dark"] .composer:focus-within {
  * 等宽字体、细线分隔、prompt 输入——技术味靠排版，不靠黑底；
  * 底色跟工作区一致（近白），点进对话不会突然换一套颜色。
  */
-.ask {
+.ask-page {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -1217,7 +1217,7 @@ html[data-theme="dark"] .composer:focus-within {
 }
 
 /* 首页的输入条：一行 prompt，白底细框，不用大圆角 */
-.ask .composer {
+.ask-page .composer {
   align-items: center;
   gap: 10px;
   padding: 18px 18px;
@@ -1229,31 +1229,31 @@ html[data-theme="dark"] .composer:focus-within {
     background 0.2s var(--ease);
 }
 
-.ask .composer:hover {
+.ask-page .composer:hover {
   border-color: var(--line-strong);
 }
 
 /* 聚焦：边框转绿 + 一圈绿光，比单纯加深阴影更像"可以打字了" */
-.ask .composer:focus-within {
+.ask-page .composer:focus-within {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px var(--brand-glow), 0 10px 26px rgba(0, 0, 0, 0.06);
 }
 
-html[data-theme="dark"] .ask .composer:focus-within {
+html[data-theme="dark"] .ask-page .composer:focus-within {
   box-shadow: 0 0 0 3px var(--brand-glow), 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
-.ask .composer-prompt {
+.ask-page .composer-prompt {
   color: var(--brand);
   font-size: 14px;
 }
 
-.ask .composer textarea {
+.ask-page .composer textarea {
   font-size: 14.5px;
   padding: 6px 0;
 }
 
-.ask .composer-send.text {
+.ask-page .composer-send.text {
   width: auto;
   height: auto;
   flex: none;
@@ -1268,13 +1268,13 @@ html[data-theme="dark"] .ask .composer:focus-within {
 }
 
 /* 一有内容就点亮：不用把鼠标挪上去才知道能发 */
-.ask .composer-send.text:not(:disabled) {
+.ask-page .composer-send.text:not(:disabled) {
   background: var(--brand);
   border-color: var(--brand);
   color: var(--on-accent);
 }
 
-.ask .composer-send.text:not(:disabled):hover {
+.ask-page .composer-send.text:not(:disabled):hover {
   filter: brightness(1.1);
 }
 
@@ -3292,7 +3292,7 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     font-size: 12.5px;
   }
 
-  .ask .composer {
+  .ask-page .composer {
     padding: 13px 14px;
     border-radius: 9px;
   }
