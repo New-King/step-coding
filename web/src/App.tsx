@@ -184,6 +184,7 @@ export default function App() {
   const playerRef = useRef<Player | null>(null);
   if (!playerRef.current) playerRef.current = new Player();
 
+  const [theme, toggleTheme] = useTheme();
   const [question, setQuestion] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [started, setStarted] = useState(false);
@@ -211,6 +212,16 @@ export default function App() {
     const v = Number(new URLSearchParams(window.location.search).get("cps"));
     return Number.isFinite(v) && v > 0 ? v : 60;
   });
+  /** 当前落在慢/中/快哪一档（?cps= 传了别的值就归到最近的一档） */
+  const speedIndex = SPEEDS.reduce(
+    (best, s, i) => (Math.abs(s.cps - cps) < Math.abs(SPEEDS[best].cps - cps) ? i : best),
+    0,
+  );
+  const cycleSpeed = () => {
+    const next = SPEEDS[(speedIndex + 1) % SPEEDS.length];
+    setCps(next.cps);
+    playerRef.current!.cps = next.cps;
+  };
   const [copied, setCopied] = useState(false);
   const [peek, setPeek] = useState<string | null>(null);
   /** 「最近」里正在等二次确认的那条：点垃圾桶先变出对勾 / 叉，别一下就删 */
@@ -1500,7 +1511,10 @@ export default function App() {
                 <i className="dot" />
                 step-coding · ready
               </span>
-              <span>每一次都能看清</span>
+              <span className="top-actions">
+                <ThemeToggle theme={theme} onToggle={toggleTheme} />
+                <RepoLink />
+              </span>
             </div>
 
             <h1>
@@ -1598,22 +1612,27 @@ export default function App() {
                         className={`line ${removingId === item.id ? "removing" : ""}`}
                       >
                         <button className="line-open" onClick={() => void openHistory(item)}>
-                          <span className={`ok ${done ? "" : "wait"}`}>{done ? "✓" : "·"}</span>
-                          <span className="t">{item.title || "最近一次"}</span>
-                          <span className="meta">
-                            {done ? (item.round ? `${item.round} 步` : "已完成") : "未完成"}
+                          <span className={`ok ${done ? "" : "wait"}`}>
+                            {done ? <CheckIcon /> : <PendIcon />}
                           </span>
+                          <span className="t">{item.title || "最近一次"}</span>
+                          {!done && <span className="meta">未完成</span>}
                         </button>
                         <span className="acts">
-                          <button onClick={() => void openHistory(item)} title="继续修改">
-                            继续
+                          <button
+                            onClick={() => void openHistory(item)}
+                            title="继续修改"
+                            aria-label="继续修改"
+                          >
+                            <ArrowIcon />
                           </button>
                           <button
                             className="danger"
                             onClick={() => commitDelete(item)}
                             title="删除"
+                            aria-label="删除"
                           >
-                            删除
+                            <TrashIcon />
                           </button>
                         </span>
                       </div>
@@ -1635,6 +1654,9 @@ export default function App() {
   return (
     <div className="app">
       <header className="bar">
+        <button className="bar-back" onClick={goHome} title="返回首页" aria-label="返回首页">
+          <BackIcon />
+        </button>
         <div className="brand">
           <span className="logo" />
           <span className="name">{projectTitle}</span>
@@ -1655,43 +1677,51 @@ export default function App() {
           </span>
         </div>
         <div className="spacer" />
-        <label className="speed">
-          速度
-          <input
-            type="range"
-            min={20}
-            max={160}
-            value={cps}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setCps(v);
-              playerRef.current!.cps = v;
-            }}
-          />
-          <b>{cps}</b>
-        </label>
+        <button
+          className="tool tip"
+          data-tip={`速度 · ${SPEEDS[speedIndex].label}`}
+          onClick={cycleSpeed}
+          aria-label={`演示速度：${SPEEDS[speedIndex].label}，点击切换`}
+        >
+          <GaugeIcon />
+        </button>
+        <span className="bar-sep" />
         {replaying ? (
-          <button className="ghost" onClick={cancelReplay} title="不演了，直接回到完成后的样子">
-            取消
+          <button className="tool tip" data-tip="取消重播" onClick={cancelReplay} aria-label="取消重播">
+            <XIcon />
           </button>
         ) : (
           <>
-            <button className="ghost" onClick={togglePause}>{paused ? "继续" : "暂停"}</button>
             <button
-              className="ghost"
+              className="tool tip"
+              data-tip={paused ? "继续" : "暂停"}
+              onClick={togglePause}
+              aria-label={paused ? "继续" : "暂停"}
+            >
+              {paused ? <PlayIcon /> : <PauseIcon />}
+            </button>
+            <button
+              className="tool tip"
+              data-tip="重播"
               onClick={replay}
               disabled={running}
-              title="把这一场重新演一遍（不调用模型）"
+              aria-label="重播"
             >
-              重播
+              <ReplayIcon />
             </button>
           </>
         )}
-        <button className="primary" onClick={exportZip}>导出代码</button>
-        <button className="ghost" onClick={() => setTraceOpen((v) => !v)}>
-          日志{logs.length > 0 ? ` ${logs.length}` : ""}
+        <button
+          className={`tool tip ${traceOpen ? "on" : ""}`}
+          data-tip="日志"
+          onClick={() => setTraceOpen((v) => !v)}
+          aria-label="日志"
+        >
+          <LogIcon />
+          {logs.length > 0 && <span className="tool-dot" />}
         </button>
-        <button className="ghost" onClick={goHome}>返回</button>
+        <span className="bar-sep" />
+        <button className="primary" onClick={exportZip}>导出代码</button>
       </header>
 
       <main className="workspace">
@@ -2128,6 +2158,154 @@ function hostOf(url: string) {
   } catch {
     return url;
   }
+}
+
+/** 演示速度只留三档：拖滑块调一个中间值，没人真的在意 63 和 68 的差别 */
+const SPEEDS = [
+  { label: "慢", cps: 30 },
+  { label: "中", cps: 60 },
+  { label: "快", cps: 110 },
+];
+
+type Theme = "light" | "dark";
+
+const REPO_URL = "https://github.com/New-King/step-coding";
+
+/** 主题挂在 <html data-theme> 上，首帧由 index.html 的内联脚本先写好 */
+function useTheme() {
+  const [theme, setTheme] = useState<Theme>(() =>
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("step-theme", theme);
+    } catch {
+      /* 隐私模式下写不进去，忽略 */
+    }
+  }, [theme]);
+
+  const toggle = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  return [theme, toggle] as const;
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+  const next = theme === "dark" ? "浅色" : "深色";
+  return (
+    <button className="icon-btn" onClick={onToggle} title={`切到${next}`} aria-label={`切到${next}`}>
+      {/* 明暗各占一半的圆：转过去就是另一面，比画个月亮太阳省事也耐看 */}
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden
+        className="contrast"
+        style={{ transform: theme === "dark" ? "rotate(180deg)" : "none" }}
+      >
+        <circle cx="12" cy="12" r="7.5" />
+        <path className="solid" d="M12 4.5a7.5 7.5 0 0 1 0 15z" />
+      </svg>
+    </button>
+  );
+}
+
+function RepoLink() {
+  return (
+    <a
+      className="icon-btn"
+      href={REPO_URL}
+      target="_blank"
+      rel="noreferrer"
+      title="GitHub 仓库"
+      aria-label="GitHub 仓库"
+    >
+      <GithubIcon />
+    </a>
+  );
+}
+
+function GaugeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M5 18h14" />
+      <path d="M8 18v-5M12 18v-8M16 18v-11" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M9.5 6v12M14.5 6v12" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M9 5.8l9.5 6.2L9 18.2z" />
+    </svg>
+  );
+}
+
+function ReplayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M20 12a8 8 0 1 1-2.7-6" />
+      <path d="M20 4.5V9h-4.5" />
+    </svg>
+  );
+}
+
+function LogIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M5 7h14M5 12h14M5 17h9" />
+    </svg>
+  );
+}
+
+function PendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="4.5" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M5 12h13M12.8 6.8L18.5 12l-5.7 5.2" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M4 7h16" />
+      <path d="M9.5 7V5.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7" />
+      <path d="M6.8 7l.7 11.5a1 1 0 0 0 1 .95h7a1 1 0 0 0 1-.95L17.2 7" />
+      <path d="M10.3 11v5M13.7 11v5" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M14.5 5.5L8 12l6.5 6.5" />
+    </svg>
+  );
+}
+
+function GithubIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="filled">
+      <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-1.93c-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.18-1.49 3.14-1.18 3.14-1.18.63 1.59.23 2.76.12 3.05.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.07.78 2.15v3.19c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z" />
+    </svg>
+  );
 }
 
 function PencilIcon() {
