@@ -1500,11 +1500,17 @@ html[data-theme="dark"] .ask .composer:focus-within {
 }
 
 .st-tile {
+  position: relative;
   width: 22px;
   height: 22px;
   flex: 0 0 22px;
   display: grid;
   place-items: center;
+}
+
+/* 转圈和勾叠在同一格里，收尾时一个退一个进，位置不会跳 */
+.st-tile > * {
+  grid-area: 1 / 1;
 }
 
 /* 9 个小方块：光点沿外圈顺时针绕圈，一圈 1.12s（每格 0.14s），不能更慢，慢了像卡住 */
@@ -1583,25 +1589,47 @@ html[data-theme="dark"] .ask .composer:focus-within {
   }
 }
 
-/* 收尾：方块退场，换成画出来的勾 */
+/* 收尾：方块缩着退场，勾在同一格里画出来，整块再轻轻弹一下 */
+.st-tile .grid-loader {
+  transition: opacity 0.2s var(--ease), transform 0.26s var(--ease);
+}
+
 .st-tile.done {
   animation: st-check-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.st-tile.done .grid-loader {
+  opacity: 0;
+  transform: scale(0.55);
 }
 
 .st-check {
   width: 20px;
   height: 20px;
+  opacity: 0;
+  transform: scale(0.72);
+  transition: opacity 0.18s var(--ease), transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.st-tile.done .st-check {
+  opacity: 1;
+  transform: none;
 }
 
 .st-check path {
   fill: none;
-  stroke: #2e7d32;
+  /* 跟品牌绿走：深色主题下自动换成亮一档，不然勾在灰底上几乎看不见 */
+  stroke: var(--brand);
   stroke-width: 2.6;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 24;
   stroke-dashoffset: 24;
-  animation: st-check-draw 0.46s cubic-bezier(0.65, 0, 0.35, 1) 0.05s forwards;
+}
+
+/* 勾是「画」出来的：方块一退就起笔，中间不留一段空着的格子 */
+.st-tile.done .st-check path {
+  animation: st-check-draw 0.5s cubic-bezier(0.55, 0, 0.35, 1) forwards;
 }
 
 @keyframes st-check-draw {
@@ -2540,9 +2568,9 @@ html[data-theme="dark"] .ask .composer:focus-within {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  /* 左边留出一点白：打勾紧贴边缘会显得被裁掉 */
-  padding: 13px 2px 13px 8px;
+  gap: 10px;
+  /* 左边只留一点点白就够：勾往里缩会把标题那一列挤窄 */
+  padding: 13px 2px 13px 4px;
   border: 0;
   background: none;
   color: inherit;
@@ -2554,8 +2582,8 @@ html[data-theme="dark"] .ask .composer:focus-within {
 /* 已完成打勾，没做完留一个点 */
 /* 状态图标：勾和空心圆都画成 14px 的线，别再用字符——11px 的「·」只剩一个点 */
 .line .ok {
-  width: 20px;
-  flex: 0 0 20px;
+  width: 18px;
+  flex: 0 0 18px;
   display: grid;
   place-items: center;
   color: var(--brand);

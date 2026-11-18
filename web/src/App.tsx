@@ -77,8 +77,8 @@ type Row =
   | { kind: "item"; item: Item }
   | { kind: "group"; key: string; items: Item[] };
 
-/** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再看两秒才收 */
-const TOAST_DONE_HOLD = 2000;
+/** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再停一会儿才收，太快看不清 */
+const TOAST_DONE_HOLD = 2600;
 
 /** 发出去之后、模型第一个动作回来之前，状态行轮着换的词 */
 const WAITING_WORDS = ["思考中", "正在分析", "正在规划", "处理中"];
@@ -1862,8 +1862,10 @@ export default function App() {
                 }
               }}
             >
-              <span className="st-tile" aria-hidden>
-                {toastDone ? <CheckMark /> : <GridLoader />}
+              {/* 两个图标都留在同一格：收尾时方块淡出、勾在原位画出来，不是硬切 */}
+              <span className={`st-tile ${toastDone ? "done" : ""}`} aria-hidden>
+                <GridLoader />
+                <CheckMark />
               </span>
               <div className="st-stack">
                 {ghostLabel && <span className="st-ghost" key={`g-${ghostLabel}`}>{ghostLabel}</span>}
