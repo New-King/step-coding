@@ -3009,8 +3009,8 @@ html[data-theme="dark"] .line .acts button.danger:hover {
   }
 
   .chat-log {
-    /* 平时只给右下角的悬浮按钮让出一点位置 */
-    padding-bottom: 66px;
+    /* 悬浮按钮只压在右下角，留 20px 就够；66px 会白吃掉一大块高度 */
+    padding-bottom: 20px;
   }
 
   .chat.composer-open .chat-log {
