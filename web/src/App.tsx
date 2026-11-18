@@ -1642,7 +1642,6 @@ export default function App() {
               </section>
             )}
 
-            <div className="ask-foot">每一步都留在屏幕上</div>
           </div>
         </div>
       </div>
@@ -1658,7 +1657,6 @@ export default function App() {
           <BackIcon />
         </button>
         <div className="brand">
-          <span className="logo" />
           <span className="name">{projectTitle}</span>
           <span
             className={`status ${

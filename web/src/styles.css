@@ -36,6 +36,9 @@
   /* 用户气泡：浅色是深灰底白字，深色换成比卡片亮一档的灰 */
   --bubble: #1d1d1f;
   --on-bubble: #ffffff;
+  /* 首页背景的两团光：顶部一点品牌绿，右下一点空气感 */
+  --glow-a: rgba(47, 122, 63, 0.07);
+  --glow-b: rgba(0, 0, 0, 0.035);
   /* 代码区：比白卡片暗半档的纸色，靠边框和正文区分，不靠颜色反差 */
   --code-bg: #f7f7f9;
   --code-ink: #232326;
@@ -79,6 +82,8 @@ html[data-theme="dark"] {
   --tip-ink: #f2f2f4;
   --bubble: #3a3a3d;
   --on-bubble: #f2f2f4;
+  --glow-a: rgba(87, 171, 104, 0.13);
+  --glow-b: rgba(255, 255, 255, 0.045);
   --code-bg: #1e1e20;
   --code-ink: #dcdce1;
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.1);
@@ -300,14 +305,6 @@ html[data-theme="dark"] .tool:disabled:hover {
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
-}
-
-.logo {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  background: var(--accent);
-  flex: 0 0 14px;
 }
 
 .name {
@@ -1008,7 +1005,11 @@ html[data-theme="dark"] .composer:focus-within {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  background: var(--ask-bg);
+  /* 两团很淡的光：标题上方一点品牌绿，右下一点亮灰，底色本身不动 */
+  background:
+    radial-gradient(88% 52% at 50% -10%, var(--glow-a), transparent 68%) no-repeat,
+    radial-gradient(64% 46% at 92% 108%, var(--glow-b), transparent 62%) no-repeat,
+    var(--ask-bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, "PingFang SC", "Hiragino Sans GB",
     monospace;
 }
@@ -1374,12 +1375,6 @@ html[data-theme="dark"] .ask .composer:focus-within {
   margin-top: 14px;
   font-size: 12px;
   color: #b3261e;
-}
-
-.ask-foot {
-  margin-top: 50px;
-  font-size: 11px;
-  color: var(--faint);
 }
 
 /* ---- 关系图：靠换行，不靠横向滚动 ---- */
