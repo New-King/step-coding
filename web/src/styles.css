@@ -33,6 +33,9 @@
   /* 悬停气泡：浅色下是深底白字，深色下换成亮一档的灰底 */
   --tip-bg: #1d1d1f;
   --tip-ink: #ffffff;
+  /* 用户气泡：浅色是深灰底白字，深色换成比卡片亮一档的灰 */
+  --bubble: #1d1d1f;
+  --on-bubble: #ffffff;
   /* 代码区：比白卡片暗半档的纸色，靠边框和正文区分，不靠颜色反差 */
   --code-bg: #f7f7f9;
   --code-ink: #232326;
@@ -42,41 +45,44 @@
 }
 
 /*
- * 深色：不是把浅色调暗，而是把"纸"换成"墨"——
- * 底是近黑的暖灰，卡片比底亮一档，边框靠白色低透明度画。
+ * 深色：不用近黑，走一条灰阶梯——
+ * 底 #242426 → 卡片 #2C2C2E → 对话块 #343436，靠明度分层而不是纯黑压白。
+ * 文字也不用纯白（#E6E6E9），按钮是低饱和灰；深色下对比太硬反而刺眼。
  */
 html[data-theme="dark"] {
-  --page: #0f0f11;
-  --card: #171719;
-  --ink: #f2f2f4;
-  --ink-soft: #d3d3d8;
-  --muted: #8b8b93;
-  --faint: #6b6b73;
-  --line: rgba(255, 255, 255, 0.11);
-  --line-soft: rgba(255, 255, 255, 0.07);
-  --accent: #f0f0f3;
-  --accent-hover: #ffffff;
-  --on-accent: #121214;
-  --hover: rgba(255, 255, 255, 0.07);
-  --hover-soft: rgba(255, 255, 255, 0.04);
-  --hover-strong: rgba(255, 255, 255, 0.1);
-  --line-strong: rgba(255, 255, 255, 0.24);
-  --surface: #1d1d20;
-  --surface-soft: #1a1a1d;
-  --warn-bg: #2a2318;
-  --ask-bg: #0f0f11;
-  --press: #26262a;
-  --field: #24242a;
-  --field-line: rgba(255, 255, 255, 0.2);
-  --field-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --page: #242426;
+  --card: #2c2c2e;
+  --ink: #e6e6e9;
+  --ink-soft: #c6c6c8;
+  --muted: #a8a8aa;
+  --faint: #7a7a7d;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --accent: #565658;
+  --accent-hover: #6b6b6d;
+  --on-accent: #f2f2f4;
+  --hover: rgba(255, 255, 255, 0.06);
+  --hover-soft: rgba(255, 255, 255, 0.035);
+  --hover-strong: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.2);
+  --surface: #343436;
+  --surface-soft: #2a2a2c;
+  --warn-bg: #3a3326;
+  --ask-bg: #1b1b1d;
+  --press: #3c3c3e;
+  --field: #343436;
+  --field-line: rgba(255, 255, 255, 0.14);
+  --field-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
   --brand: #57ab68;
   --brand-glow: rgba(87, 171, 104, 0.24);
-  --tip-bg: #2e2e34;
+  --tip-bg: #3a3a3d;
   --tip-ink: #f2f2f4;
-  --code-bg: #121215;
+  --bubble: #3a3a3d;
+  --on-bubble: #f2f2f4;
+  --code-bg: #1e1e20;
   --code-ink: #dcdce1;
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
-  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.26);
 }
 
 * {
@@ -226,6 +232,15 @@ button {
 .tool:disabled:hover {
   background: transparent;
   color: var(--muted);
+}
+
+/* 深色下 muted 在灰底上太糊，图标改用次级文字色 */
+html[data-theme="dark"] .tool {
+  color: var(--ink-soft);
+}
+
+html[data-theme="dark"] .tool:disabled:hover {
+  color: var(--ink-soft);
 }
 
 /* 日志开着的时候按钮保持提亮，和抽屉对应上 */
@@ -858,8 +873,8 @@ html[data-theme="dark"] .composer:focus-within {
 
 .bubble.user {
   align-self: flex-end;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--bubble);
+  color: var(--on-bubble);
   border-bottom-right-radius: 5px;
 }
 
@@ -2260,8 +2275,8 @@ html[data-theme="dark"] .ask .composer:focus-within {
   gap: 6px;
   padding: 9px 12px;
   border-radius: 12px 12px 4px 12px;
-  background: var(--ink);
-  color: var(--on-accent);
+  background: var(--bubble);
+  color: var(--on-bubble);
   font-size: 12.5px;
   line-height: 1.6;
 }
