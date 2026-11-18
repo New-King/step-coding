@@ -41,8 +41,8 @@
   --glow-b: rgba(0, 0, 0, 0.035);
   /* 玻璃层：半透明底，配合 backdrop-filter 让滚动内容从下面虚化着过 */
   --glass: rgba(255, 255, 255, 0.58);
-  /* 滚动区上下边缘的渐隐高度 */
-  --fade: 14px;
+  /* 滚动区上下边缘的渐隐高度：和一行代码差不多高，两端看着才一致 */
+  --fade: 18px;
   /* 代码区：比白卡片暗半档的纸色，靠边框和正文区分，不靠颜色反差 */
   --code-bg: #f7f7f9;
   --code-ink: #232326;
@@ -164,6 +164,10 @@ button {
   padding: 0 14px 0 10px;
   background: var(--card);
   border-bottom: 1px solid var(--line-soft);
+  /* 手机端这层带 backdrop-filter，会自己成一层堆叠上下文，
+     不抬起来的话按钮下方的悬停气泡会被工作区盖掉一半 */
+  position: relative;
+  z-index: 10;
 }
 
 /* 返回留在最左：导航就该在起点，别跟动作按钮排成一排 */
@@ -339,6 +343,10 @@ html[data-theme="dark"] .tool:disabled:hover {
 /* 唯一的主按钮：方一点、实心，跟旁边无底色的工具按钮拉开层级 */
 .primary {
   height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 14px;
   border-radius: 8px;
   background: var(--accent);
@@ -347,6 +355,17 @@ html[data-theme="dark"] .tool:disabled:hover {
   font-weight: 500;
   white-space: nowrap;
   transition: background 0.2s var(--ease), transform 0.2s var(--ease);
+}
+
+.primary svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .primary:hover {
@@ -447,7 +466,24 @@ html[data-theme="dark"] .tool:disabled:hover {
   overflow: overlay;
   padding: 16px 20px 28px;
   color: var(--code-ink);
-  /* 上下边缘各留一段渐隐：内容滚到边上时化开，而不是被硬切 */
+}
+
+/*
+ * 边缘渐隐只加在「那一端确实还有内容」的方向上（由脚本切 can-up / can-down）：
+ * 停在开头时只有下沿化开，翻到中间时上下一起化，
+ * 不会出现一端有影子、另一端干干净的情形。
+ */
+.code.can-up {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 var(--fade), #000 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 var(--fade), #000 100%);
+}
+
+.code.can-down {
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+.code.can-up.can-down {
   -webkit-mask-image: linear-gradient(
     180deg,
     transparent 0,
@@ -953,22 +989,7 @@ html[data-theme="dark"] .composer:focus-within {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  padding-top: 12px;
   max-height: none;
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    transparent 0,
-    #000 var(--fade),
-    #000 calc(100% - var(--fade)),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    180deg,
-    transparent 0,
-    #000 var(--fade),
-    #000 calc(100% - var(--fade)),
-    transparent 100%
-  );
 }
 
 .chat-empty {
@@ -1012,6 +1033,8 @@ html[data-theme="dark"] .composer:focus-within {
 }
 
 .chat-foot .composer {
+  /* 发送按钮跟着文字垂直居中：贴底会看着比字低半行，尤其手机上下留白窄时更明显 */
+  align-items: center;
   padding: 5px 5px 5px 12px;
   border-radius: 14px;
   background: var(--field);
@@ -3186,9 +3209,8 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     display: none;
   }
 
-  /* 顶栏放不下这么多：状态和速度先退场，播放控制与导出保留 */
-  .bar .status,
-  .speed-tool {
+  /* 顶栏放不下这么多：状态退场，导出收成图标，位置让给速度 */
+  .bar .status {
     display: none;
   }
 
@@ -3196,8 +3218,16 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     max-width: none;
   }
 
-  .primary {
-    padding: 0 12px;
+  /* 只剩图标：和旁边 30px 的圆形工具按钮对齐 */
+  .primary.export {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .export-label {
+    display: none;
   }
 
   .trace {

@@ -1440,6 +1440,14 @@ export default function App() {
   const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight < 48;
 
+  /** 代码区的渐隐按方向给：哪一端还有内容，哪一端才化开 */
+  const syncCodeFade = () => {
+    const el = codeRef.current;
+    if (!el) return;
+    el.classList.toggle("can-up", el.scrollTop > 1);
+    el.classList.toggle("can-down", el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+  };
+
   // 过程区：新内容跟着滚，但你滑上去了就不抢
   useEffect(() => {
     const el = logRef.current;
@@ -1452,6 +1460,7 @@ export default function App() {
     if (!el || !codeStickRef.current) return;
     el.scrollTop = el.scrollHeight;
     codeAutoTopRef.current = el.scrollTop;
+    syncCodeFade();
   }, [code]);
 
   // 换文件时回到开头看
@@ -1461,6 +1470,7 @@ export default function App() {
     codeStickRef.current = true;
     el.scrollTop = 0;
     codeAutoTopRef.current = 0;
+    syncCodeFade();
   }, [activeFile]);
 
   const copy = async () => {
@@ -1748,7 +1758,10 @@ export default function App() {
           {logs.length > 0 && <span className="tool-dot" />}
         </button>
         <span className="bar-sep" />
-        <button className="primary" onClick={exportZip}>导出代码</button>
+        <button className="primary export" onClick={exportZip} title="导出代码" aria-label="导出代码">
+          <DownloadIcon />
+          <span className="export-label">导出代码</span>
+        </button>
       </header>
 
       <main className="workspace">
@@ -1811,6 +1824,7 @@ export default function App() {
               onScroll={() => {
                 const el = codeRef.current;
                 if (!el) return;
+                syncCodeFade();
                 // 自己刚滚到过的位置：这次事件是跟随造成的，不是用户往上翻
                 if (Math.abs(el.scrollTop - codeAutoTopRef.current) < 2) return;
                 codeStickRef.current = nearBottom(el);
@@ -2307,6 +2321,15 @@ function PendIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
       <circle cx="12" cy="12" r="4.5" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M12 4.5V15M7.5 10.8L12 15.3l4.5-4.5" />
+      <path d="M5 18.5h14" />
     </svg>
   );
 }
