@@ -1455,7 +1455,13 @@ export default function App() {
    * `prompt` / `send` 只给首页用（终端风的 `›` 和 run）；对话页保持原来的箭头圆钮。
    */
   const composer = (opts: { prompt?: string; send?: string } = {}) => (
-    <div className={`composer ${running ? "busy" : ""}`}>
+    <div
+      className={`composer ${running ? "busy" : ""}`}
+      // 点框里任何地方都落到输入框上，不用非得点中那行字
+      onClick={(e) => {
+        if (!(e.target as HTMLElement).closest("button")) composerRef.current?.focus();
+      }}
+    >
       {opts.prompt && <span className="composer-prompt">{opts.prompt}</span>}
       <textarea
         ref={composerRef}
@@ -1507,15 +1513,27 @@ export default function App() {
               代码一行一行写在屏幕上，慢一点也看得清。
             </p>
 
-            {composer({ prompt: "›", send: "run" })}
-
+            {/* 一行走马灯：示例先露出来，输入框跟在下面 */}
             <div className="ask-examples">
-              {EXAMPLES.map((item) => (
-                <button key={item.ask} className="ask-chip" onClick={() => void start(item.ask)}>
-                  {item.label}
-                </button>
-              ))}
+              <div className="ask-track">
+                {[0, 1].map((copy) => (
+                  <div className="ask-set" key={copy} aria-hidden={copy === 1}>
+                    {EXAMPLES.map((item) => (
+                      <button
+                        key={item.ask}
+                        className="ask-chip"
+                        tabIndex={copy === 1 ? -1 : 0}
+                        onClick={() => void start(item.ask)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
+
+            {composer({ prompt: "›", send: "run" })}
 
             {declined && (
               <div className="decline-card">

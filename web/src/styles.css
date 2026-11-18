@@ -560,6 +560,8 @@ button {
   border-radius: 18px;
   box-shadow: var(--shadow);
   text-align: left;
+  /* 整条都是输入区：点空白处也能落光标 */
+  cursor: text;
   transition: box-shadow 0.2s var(--ease);
 }
 
@@ -585,6 +587,7 @@ button {
   width: 36px;
   height: 36px;
   flex: 0 0 36px;
+  cursor: pointer;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
@@ -869,16 +872,18 @@ button {
 .ask .composer {
   align-items: center;
   gap: 10px;
-  padding: 16px 18px;
+  padding: 18px 18px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--card);
   box-shadow: none;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
 }
 
+/* 聚焦不描粗边：只把阴影铺开一点，像纸被轻轻托起来 */
 .ask .composer:focus-within {
-  border-color: #2f7a3f;
-  box-shadow: 0 0 0 3px rgba(47, 122, 63, 0.12);
+  border-color: var(--line);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.07), 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
 .ask .composer-prompt {
@@ -887,8 +892,8 @@ button {
 }
 
 .ask .composer textarea {
-  font-size: 14px;
-  padding: 3px 0;
+  font-size: 14.5px;
+  padding: 6px 0;
 }
 
 .ask .composer-send.text {
@@ -909,12 +914,51 @@ button {
   color: #fff;
 }
 
-/* 示例：平铺成几行，看得完也点得到 */
+/*
+ * 示例：一行慢慢走。
+ *
+ * 内容复制两份首尾相接，走完一份正好接上，看着就是无限；
+ * 两边用 mask 淡出，别在容器边缘硬切。
+ */
 .ask-examples {
+  overflow: hidden;
+  margin: 0 0 22px;
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.ask-track {
   display: flex;
-  flex-wrap: wrap;
+  width: max-content;
+  animation: ask-marquee 46s linear infinite;
+}
+
+.ask-set {
+  display: flex;
+  flex: none;
   gap: 8px;
-  margin: 26px 0 0;
+  padding-right: 8px;
+}
+
+@keyframes ask-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-examples {
+    overflow-x: auto;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  .ask-track {
+    animation: none;
+  }
 }
 
 .ask-chip {
