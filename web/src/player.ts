@@ -37,6 +37,20 @@ export type Snapshot = {
   finished: boolean;
 };
 
+/**
+ * 打了一半的那段字。
+ *
+ * 播放器只把「已经摆出来的内容」和「还没打的字」分开记：暂停 / 刷新时存下这一份，
+ * 回来摆回半截再接着打；`at` 是剩余部分要插进去的位置（改代码时是中间某处，不是末尾）。
+ */
+export type Typing = {
+  path: string;
+  shown: string;
+  rest: string;
+  at: number;
+  banner: string;
+};
+
 /** 往回最多找这么多行，再往前就不是"这一块"了 */
 const HINT_LINES = 60;
 /** 提示别太长，右上角浮层就那么宽，再长就截掉 */
@@ -355,6 +369,51 @@ export class Player {
     return { ...this.buffers };
   }
 
+  /** 正在逐字打的那个文件；没在打字就是 null */
+  get typingPath(): string | null {
+    return this.pendingPath || null;
+  }
+
+  /** 手上这段还没打完的字：暂停 / 刷新先存下来，回来才能接着打 */
+  typingState(): Typing | null {
+    if (!this.pending || !this.pendingPath) return null;
+    return {
+      path: this.pendingPath,
+      shown: this.buffers[this.pendingPath] ?? "",
+      rest: this.pending,
+      at: this.pendingAt,
+      banner: this.banner,
+    };
+  }
+
+  /**
+   * 从「打了一半」的地方接着打。
+   *
+   * 暂停 / 退出后回到现场时用：屏幕上摆回停下的那半截，剩下的按同一个速度补完，
+   * 看起来像接着写，而不是一进来整份文件就已经躺在那。
+   */
+  resumeTyping(t: Typing) {
+    this.steps = [];
+    this.cursor = 0;
+    this.buffers = { ...this.buffers, [t.path]: t.shown };
+    this.active = t.path;
+    if (t.banner) this.banner = t.banner;
+    this.pending = t.rest;
+    this.pendingPath = t.path;
+    // 编辑时剩余的字要插在中间（被替换那段原来的位置），不是接在尾巴上
+    this.pendingAt = Math.min(t.at, t.shown.length);
+    this.carry = 0;
+    this.waitUntil = 0;
+    this.deleting = null;
+    this.deleteAt = 0;
+    this.finished = false;
+    this.waiting = false;
+    this.running = true;
+    this.last = performance.now();
+    if (!this.timer) this.timer = setTimeout(this.tick, 16);
+    this.emit();
+  }
+
   load(plan: Plan) {
     this.steps = plan.steps;
     this.cursor = 0;
@@ -468,6 +527,9 @@ export class Player {
     this.last = now;
 
     if (this.paused) {
+      // 暂停时也别把「还没开演的步骤」直接铺成全量：先把它摆到起点
+      // （create 清空、edit 移除原文），字等继续了再打
+      if (!this.pending && this.cursor < this.steps.length) this.advance(now);
       this.timer = setTimeout(this.tick, 16);
       return;
     }

@@ -5,7 +5,7 @@ import css from "highlight.js/lib/languages/css";
 import xml from "highlight.js/lib/languages/xml";
 import python from "highlight.js/lib/languages/python";
 import go from "highlight.js/lib/languages/go";
-import { Player, type Snapshot, type Step } from "./player";
+import { Player, type Snapshot, type Step, type Typing } from "./player";
 import { downloadZip } from "./zip";
 import { checkFiles, summarize } from "./check";
 
@@ -60,6 +60,8 @@ type SavedSession = {
   round: number;
   /** 停在哪一步：回来时据此决定是「接着跑」还是「已经结束」 */
   status?: RunStatus;
+  /** 停的时候正打到一半的那段字：回来先摆半截，再接着打 */
+  typing?: Typing | null;
 };
 
 type HistoryItem = {
@@ -73,6 +75,8 @@ type HistoryItem = {
   updatedAt?: number;
   /** 老记录没有这一项：按「已完成」处理 */
   status?: RunStatus;
+  /** 停的时候正在打的半截：点回来先摆回半截再接着打 */
+  typing?: Typing | null;
 };
 
 const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
@@ -334,6 +338,8 @@ export default function App() {
     files: filesRef.current,
     round: seqRef.current,
     status: currentStatus(),
+    // 正打到一半也一起存：刷新回来先摆半截，再按原速补完
+    typing: playerRef.current?.typingState() ?? null,
   });
 
   /** 把现场存下来：刷新后还能在「最近」里找回这一场。 */
@@ -486,6 +492,7 @@ export default function App() {
           round: saved.round ?? 0,
           updatedAt: Date.now(),
           status: st,
+          typing: saved.typing ?? null,
         };
         upsertHistory(entry);
         // 上一次跑到一半就刷新 / 关页：直接回到现场停在那一版，别让人再从首页找回来
@@ -505,7 +512,20 @@ export default function App() {
       window.history.replaceState(null, "", window.location.pathname + window.location.hash);
     }
 
+    // 关页 / 切走前再落一次现场：push 存的是「事件刚到手」那一刻，
+    // 之后这段字一直在打，不补这一下，回来就只能看到整份文件
+    const flush = () => saveSession();
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") saveSession();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onHidden);
+
     return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onHidden);
       p.stop();
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     };
@@ -740,8 +760,8 @@ export default function App() {
 
     if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
       pushStep(ev);
-      playEvent(ev);
-      return false;
+      // 还在打上一个文件的话，这一段先排着；循环跟着停，演完再接着往下问
+      return playEvent(ev);
     }
 
     if (ev.action === "error") {
@@ -779,9 +799,23 @@ export default function App() {
     return false;
   };
 
-  /** 把一次文件动作演出来，演完继续循环。 */
-  const playEvent = (ev: Extract<Event, { action: "write" | "edit" | "delete" }>) => {
+  /**
+   * 把一次文件动作演出来。
+   *
+   * 返回 true 表示这一段落到了队列里：上一个文件还没打完，等它打完再演，
+   * 否则没打出来的半截会被冲掉，屏幕上一跳就补齐了（暂停回来接着跑时尤其明显）。
+   */
+  const playEvent = (ev: Extract<Event, { action: "write" | "edit" | "delete" }>): boolean => {
     const p = playerRef.current!;
+
+    if (p.typingPath) {
+      note("play.wait", `${p.typingPath} 还在打，先排着`);
+      afterPlayerRef.current = () => {
+        playEvent(ev);
+        void pump();
+      };
+      return true;
+    }
 
     if (ev.action === "edit") {
       const before = filesRef.current[ev.path] ?? "";
@@ -795,7 +829,7 @@ export default function App() {
           p.setBuffers(fixed);
           setSnap((prev) => ({ ...prev, active: ev.path }));
         }
-        return;
+        return false;
       }
     }
     const files: Record<string, string> = { ...filesRef.current };
@@ -810,7 +844,7 @@ export default function App() {
       step = { type: "delete", path: ev.path, banner: ev.label, delay: 320 };
     }
 
-    // 上一段还没演完：直接收尾，保证这一段的起点是对的
+    // 剩下的不是打字（比如删除还在演）：直接收尾，保证这一段的起点是对的
     if (p.busy) p.finishNow();
 
     setPeek(null);
@@ -823,6 +857,7 @@ export default function App() {
       stats: { files: Object.keys(files).length, steps: 1, lines: 0 },
     });
 
+    return false;
   };
 
   const finish = (text: string) => {
@@ -858,7 +893,9 @@ export default function App() {
       if (
         same >= 0 &&
         prev[same].items.length === entry.items.length &&
-        prev[same].status === entry.status
+        prev[same].status === entry.status &&
+        // 打字打到哪也得算一次变化：返回时没新动作，但半截字往后挪了
+        (prev[same].typing?.rest.length ?? 0) === (entry.typing?.rest.length ?? 0)
       ) {
         return prev;
       }
@@ -908,6 +945,8 @@ export default function App() {
       files,
       round: seqRef.current,
       status: currentStatus(),
+      // 「最近」也记半截：从首页点回来才知道该停在哪儿接着打
+      typing: playerRef.current?.typingState() ?? null,
     });
   };
 
@@ -1072,18 +1111,15 @@ export default function App() {
       return;
     }
 
-    playerRef.current!.stop();
+    // 只暂停，不 stop：stop 会把「还在打字」这件事抹掉（running=false → busy=false），
+    // 于是返回途中回来的 finish 一看播放器"不忙"就当场收尾，回来就成了「已完成」。
+    // 留着 tick 空转（paused 时它什么都不做），busy 才是真的。
     playerRef.current!.paused = true;
     setPaused(true);
 
-    // 收尾动作已经在等了：这次其实做完了，finish 里会自己记进「最近」
-    const after = afterPlayerRef.current;
-    afterPlayerRef.current = null;
-    if (after) {
-      after();
-      setStarted(false);
-      return;
-    }
+    // 收尾动作（say / finish）还挂在 afterPlayerRef 里也不在这里补：
+    // 它等的可能是「文件还没打完」，一补就把这场判成做完了。
+    // 留着不动，回来点继续、字打完时它自己会执行——和按暂停一个样。
 
     // 中途返回：这一场也记进「最近」。跑了一半的记成「暂停」而不是「结束」——
     // 这样再点进来还是停下的样子，点播放能接着跑；等回答的仍记「等回答」。
@@ -1208,9 +1244,15 @@ export default function App() {
     const st: RunStatus = item.status ?? "done";
     const resumable = st === "paused" || st === "running";
 
-    player.stop();
+    // 返回首页后再点回同一场：tick 还在跑，别 stop——
+    // 停了 running=false，busy 就是假的，挂着的收尾会被当场执行
+    const sameRun = sessionIdRef.current === item.id;
+    if (!sameRun) {
+      player.stop();
+      // 换了项目才清收尾回调；同一场清了，字打完也没人收尾
+      afterPlayerRef.current = null;
+    }
     player.paused = resumable;
-    afterPlayerRef.current = null;
     setPaused(resumable);
     setStarted(true);
     setError(null);
@@ -1227,21 +1269,42 @@ export default function App() {
     const items = item.items.map((it) => (it.pending ? { ...it, pending: false } : it));
     itemsRef.current = items;
     setItems(items);
-    filesRef.current = item.files;
+    // 同一场回来：filesRef 就是最新的（含返回途中刚到的改动），别用记录里的旧值盖回去
+    if (!sameRun) {
+      filesRef.current = item.files;
+      serverFilesRef.current = item.files;
+    }
     startFilesRef.current = item.base ?? {};
-    serverFilesRef.current = item.files;
     pendingSearchRef.current = "";
     pendingCardRef.current = null;
     seqRef.current = item.round ?? 0;
     idRef.current = items.reduce((m, i) => Math.max(m, i.id), 0);
-    player.setBuffers(item.files);
+
+    /**
+     * 回来接着打：停的时候手里还剩半截字，就先摆半截，剩下的照原速补完。
+     * 直接整份铺出来，看起来像「本来就写完了」，跟离开时对不上。
+     */
+    const resumeTyping = (all: Record<string, string>) => {
+      const t = item.typing;
+      if (st !== "paused" || !t?.rest) return;
+      const full = t.shown.slice(0, t.at) + t.rest + t.shown.slice(t.at);
+      // 服务端内容对不上就不硬接：宁可整份摆出来，也别接出一份错的文件
+      if (all[t.path] !== full) return;
+      note("history.typing", `${t.path} 还剩 ${t.rest.length} 字`);
+      player.resumeTyping(t);
+    };
+
+    // 同一场回来：播放器里还留着没打完的半截，别用整份把它冲掉
+    const live = sameRun ? player.files() : item.files;
+    if (!sameRun) player.setBuffers(item.files);
     setSnap({
       ...EMPTY,
-      buffers: item.files,
-      active: Object.keys(item.files)[0] ?? null,
+      buffers: live,
+      active: Object.keys(live)[0] ?? null,
       // 没跑完的别显示成「已完成」：代码停在离开时那一版
       finished: st === "done",
     });
+    if (!sameRun) resumeTyping(item.files);
 
     // 停在「等回答」上：把那个问题原样摆回来
     if (st === "waiting") {
@@ -1276,14 +1339,24 @@ export default function App() {
     if (!sync) return;
     seqRef.current = sync.seq ?? seqRef.current;
     const files = sync.files ?? item.files;
-    filesRef.current = files;
-    serverFilesRef.current = files;
-    player.setBuffers(files);
-    setSnap((prev) => ({
-      ...prev,
-      buffers: files,
-      active: Object.keys(files)[0] ?? null,
-    }));
+    if (!sameRun) {
+      filesRef.current = files;
+      serverFilesRef.current = files;
+      player.setBuffers(files);
+      setSnap((prev) => ({
+        ...prev,
+        buffers: files,
+        active: Object.keys(files)[0] ?? null,
+      }));
+      resumeTyping(files);
+    }
+
+    // 收尾还挂着、播放器又没在演：这场其实已经做完了，回来这一下补上
+    if (afterPlayerRef.current && !player.busy) {
+      const after = afterPlayerRef.current;
+      afterPlayerRef.current = null;
+      after();
+    }
   };
 
   /** 从「最近」里删掉一个项目：本地记录 + 服务端会话一起清掉。 */
