@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 STORE = ROOT / "var" / "sessions"
-MAX_SESSIONS = 40
+MAX_SESSIONS = 12
 MAX_MESSAGES = 80
 
 # 会话 id 会拼进文件路径，只允许安全字符；部署到公网时这是必须的
