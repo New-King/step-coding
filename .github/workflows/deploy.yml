@@ -36,8 +36,10 @@ jobs:
       - name: 准备 SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+          # DEPLOY_KEY 存的是私钥的 base64（单行），避免多行 secret 粘贴时被截断
+          echo "${{ secrets.DEPLOY_KEY }}" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -l -f ~/.ssh/deploy_key
 
       - name: 测试 SSH 连接
         run: |
