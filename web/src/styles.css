@@ -1098,6 +1098,11 @@ html[data-theme="dark"] .composer:focus-within {
   padding: 52px 28px 88px;
 }
 
+/* 没有「最近」时只有一小块内容：上下留白取齐，整块落在视口中间，不会吊在上半屏 */
+.ask-page.empty .ask-hero {
+  padding: 40px 28px;
+}
+
 .ask-inner {
   width: 100%;
   max-width: 860px;
