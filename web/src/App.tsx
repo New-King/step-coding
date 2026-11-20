@@ -89,7 +89,9 @@ const FILE_KINDS = new Set(["write", "edit", "delete"]);
 
 type Row =
   | { kind: "item"; item: Item }
-  | { kind: "group"; key: string; items: Item[] };
+  | { kind: "group"; key: string; items: Item[] }
+  /** 搜索结果卡片：算产出，铺在过程块外面，不进折叠里 */
+  | { kind: "search"; key: string; item: Item };
 
 /** 收尾时「打勾」在浮层上停多久（毫秒）：勾画完再停一会儿才收，太快看不清 */
 const TOAST_DONE_HOLD = 2600;
@@ -1470,6 +1472,10 @@ export default function App() {
         out.push({ kind: "group", key: `g${process[0].id}`, items: process });
       }
       for (const it of round.body) {
+        // 搜到的结果是产出，和回复一样铺在外面；「搜索 xx · n 条」那一行仍留在过程块里
+        if (it.kind === "search" && it.ev.action === "search" && it.ev.results?.length) {
+          out.push({ kind: "search", key: `s${it.id}`, item: it });
+        }
         if (!PROCESS_KINDS.has(it.kind)) out.push({ kind: "item", item: it });
       }
     }
@@ -2029,6 +2035,10 @@ export default function App() {
                   time={runTime}
                   spinning={running && !paused}
                 />
+              ) : row.kind === "search" ? (
+                <div key={row.key} className="tl-search-out">
+                  {row.item.ev.action === "search" && <SearchCards ev={row.item.ev} />}
+                </div>
               ) : (
                 <TimelineItem
                   key={row.item.id}
@@ -2786,6 +2796,29 @@ function summaryOf(ev: Event): ReactNode {
   }
 }
 
+/** 搜到的网页卡片：算产出，铺在过程块外面，最多 4 张 */
+function SearchCards({ ev }: { ev: Extract<Event, { action: "search" }> }) {
+  if (!ev.results || ev.results.length === 0) return null;
+  return (
+    <div className="ws-grid">
+      {ev.results.slice(0, 4).map((r, i) => (
+        <a
+          key={i}
+          className="ws-card"
+          style={{ animationDelay: `${i * 45}ms` }}
+          href={r.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span className="ws-fav">{(r.site || hostOf(r.url))[0] ?? "·"}</span>
+          <span className="ws-title">{r.title || r.url}</span>
+          <span className="ws-host">{hostOf(r.url)}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function detailOf(
   ev: Event,
   picked: string | undefined,
@@ -2809,33 +2842,8 @@ function detailOf(
       );
 
     case "search":
-      if (!ev.results) return null;
-      return (
-        <div className="tl-search-body">
-          {ev.error ? (
-            <div className="ws-waiting">搜索失败：{ev.error}</div>
-          ) : ev.results.length > 0 ? (
-            <div className="ws-grid">
-              {ev.results.slice(0, 4).map((r, i) => (
-                <a
-                  key={i}
-                  className="ws-card"
-                  style={{ animationDelay: `${i * 45}ms` }}
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <span className="ws-fav">{(r.site || hostOf(r.url))[0] ?? "·"}</span>
-                  <span className="ws-title">{r.title || r.url}</span>
-                  <span className="ws-host">{hostOf(r.url)}</span>
-                </a>
-              ))}
-            </div>
-          ) : (
-            <div className="ws-waiting">没搜到结果</div>
-          )}
-        </div>
-      );
+      // 结果卡片是产出，铺在过程块外面（SearchCards）；这里只留失败原因
+      return ev.error ? <div className="ws-waiting">搜索失败：{ev.error}</div> : null;
 
     case "ask":
       return (

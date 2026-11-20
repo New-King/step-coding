@@ -2250,6 +2250,11 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   font-variant-numeric: tabular-nums;
 }
 
+/* 搜索结果算产出：铺在过程块外面，不缩进到时间线里 */
+.tl-search-out {
+  padding: 2px 0;
+}
+
 .ws-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
