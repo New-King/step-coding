@@ -495,10 +495,8 @@ export default function App() {
           typing: saved.typing ?? null,
         };
         upsertHistory(entry);
-        // 上一次跑到一半就刷新 / 关页：直接回到现场停在那一版，别让人再从首页找回来
-        if (st === "paused" || st === "waiting") {
-          window.setTimeout(() => void openHistory(entry), 60);
-        }
+        // 不自动跳回现场：刷新停在首页，想继续的人自己去「最近」点。
+        // 自动把人拉进一个没写完的对话，等于替他做了「继续」的决定。
       }
     } catch {
       /* 读不出来就算了 */
@@ -1417,7 +1415,7 @@ export default function App() {
       ? titleOf(firstUserItem.ev.text, 22)
       : "新项目";
 
-  /** 这一场到底做完没有：顶栏和「最近」用的是同一个判断 */
+  /** 顶栏用：收尾动作有没有出现在最后一句之后（「最近」看记录里的 status，不看这个） */
   const projectIsDone = projectDone(items);
 
   /** 刚发出去、模型还没吐第一个动作：这几个词轮着换，别让界面像卡死 */
@@ -1779,7 +1777,9 @@ export default function App() {
                 </div>
                 <div className="history-list">
                   {history.map((item) => {
-                    const done = projectDone(item.items);
+                    // 记录里的状态优先：模型可能早就说了收尾，但字还在打，
+                    // 这一场其实是停在「暂停」上——按时间线判会误判成打勾
+                    const done = item.status ? item.status === "done" : projectDone(item.items);
                     return (
                       <div
                         key={item.id}
