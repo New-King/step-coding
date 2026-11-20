@@ -2442,6 +2442,19 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   word-break: break-word;
 }
 
+/* 不是故障、只是提一句（额度用完）：语气照常，底色淡淡偏红就够了 */
+.tl.say.warn {
+  background: #fdf4f3;
+  border-color: #f0d6d3;
+  color: #8a2f26;
+}
+
+html[data-theme="dark"] .tl.say.warn {
+  background: #2e2022;
+  border-color: #4a2b2c;
+  color: #f0a49c;
+}
+
 /* ---- 逐题追问 ---- */
 .ask-progress {
   display: flex;

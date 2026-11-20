@@ -14,12 +14,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, search, session
+from . import agent, search, session, usage
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -67,10 +67,29 @@ def post_session(body: SessionIn) -> dict[str, Any]:
     }
 
 
+def _client_key(request: Request) -> str:
+    """反代后面取真实来源：优先 X-Real-IP / X-Forwarded-For，再退到连接地址。"""
+    ip = (request.headers.get("x-real-ip") or "").strip()
+    if not ip:
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")
+        ip = forwarded[0].strip() if forwarded else ""
+    if not ip and request.client:
+        ip = request.client.host
+    return usage.key_of(ip, request.headers.get("x-client-id") or "")
+
+
 @app.post("/api/step")
-def post_step(body: StepIn) -> dict[str, Any]:
+def post_step(body: StepIn, request: Request) -> dict[str, Any]:
     if not session.valid_id(body.session_id):
         raise HTTPException(status_code=400, detail="会话 id 不合法")
+
+    key = _client_key(request)
+    if usage.over(key):
+        raise HTTPException(
+            status_code=429,
+            detail=f"今天的 token 额度（{usage.limit()}）用完了，明天再试",
+        )
+
     sess = session.get(body.session_id)
     if sess is None:
         raise HTTPException(status_code=404, detail="会话不存在，请重新开始")
@@ -106,6 +125,8 @@ def post_step(body: StepIn) -> dict[str, Any]:
             )
         except agent.AgentError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        usage.add(key, agent.take_tokens())
 
         sess.messages = result["messages"]
         sess.files = result.get("files", sess.files)

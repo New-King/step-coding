@@ -3,11 +3,20 @@ from __future__ import annotations
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 from backend import agent, main, session
 from tests.helpers import reply, scripted
 
 SID = "s-test"
+
+
+def fake_request(headers: dict | None = None):
+    """直接调 post_step 时用的最小替身：只用到 headers 和 client。"""
+    return SimpleNamespace(
+        headers=headers or {},
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
 
 
 def open_session(client, sid: str = SID):
@@ -147,7 +156,9 @@ def test_concurrent_same_seq_runs_once(client, monkeypatch):
 
     def worker():
         barrier.wait()
-        results.append(main.post_step(main.StepIn(session_id=sid, seq=0, message="hi")))
+        results.append(
+            main.post_step(main.StepIn(session_id=sid, seq=0, message="hi"), fake_request())
+        )
 
     threads = [threading.Thread(target=worker) for _ in range(2)]
     for t in threads:

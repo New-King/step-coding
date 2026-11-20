@@ -50,7 +50,7 @@ cd web && pnpm install && pnpm build     # build 会先跑 tsc --noEmit
 健康检查：`curl localhost:8790/api/health`
 
 ```json
-{"ok":true,"model":"deepseek-chat","configured":true,"search":"deepseek"}
+{"ok":true,"model":"deepseek-flash","configured":true,"search":"deepseek"}
 ```
 
 ---

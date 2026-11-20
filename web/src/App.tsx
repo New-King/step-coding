@@ -31,7 +31,8 @@ type Event =
   | { action: "delete"; path: string; label: string }
   | { action: "error"; text: string }
   | { action: "finish"; text: string }
-  | { action: "say"; text: string }
+  /** warn：不是故障、但要提一句的提示（如额度用完），按普通回话铺开，只换底色 */
+  | { action: "say"; text: string; warn?: boolean }
   | { action: "decline"; text: string; suggestions: string[] }
   | { action: "user"; text: string };
 
@@ -155,6 +156,21 @@ const EXAMPLES: { label: string; ask: string }[] = [
 
 const HISTORY_KEY = "stepcoding.history.v2";
 const SESSION_KEY = "stepcoding.session.v1";
+const CLIENT_KEY = "stepcoding.client.v1";
+
+/** 浏览器身份：只用来按设备算每日 token 额度，清掉缓存就等于换了个新额度 */
+function clientId() {
+  try {
+    let id = localStorage.getItem(CLIENT_KEY);
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem(CLIENT_KEY, id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
 const MAX_ROUNDS = 20;
 /** 「最近」最多留几条：满了就不让新建，先删一条或清空 */
 const MAX_HISTORY = 10;
@@ -171,7 +187,7 @@ function langOf(name: string) {
 async function request(url: string, body: unknown, method = "POST") {
   const res = await fetch(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-client-id": clientId() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
@@ -688,11 +704,17 @@ export default function App() {
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
       note("loop.error", msg);
-      setError(msg);
-      pushStep({ action: "error", text: msg } as Event);
-      statusRef.current = "done";
-      setRunning(false);
-      saveSession();
+      // 额度用完不是故障：按一句普通回话铺在时间线里，只换底色，不弹错误条
+      if (msg.includes("额度")) {
+        push({ action: "say", text: msg, warn: true } as Event);
+        stopRun();
+      } else {
+        setError(msg);
+        pushStep({ action: "error", text: msg } as Event);
+        statusRef.current = "done";
+        setRunning(false);
+        saveSession();
+      }
     } finally {
       pumpingRef.current = false;
       note("pump", `exit status=${statusRef.current}`);
@@ -2711,7 +2733,8 @@ function TimelineItem({
 
   // 回话和收尾那句都是给用户看的正文，直接铺开，不缩成可点开的摘要
   if (ev.action === "say" || ev.action === "finish") {
-    return <div className="tl say">{ev.text || "完成"}</div>;
+    const warn = ev.action === "say" && ev.warn === true;
+    return <div className={warn ? "tl say warn" : `tl ${ev.action}`}>{ev.text || "完成"}</div>;
   }
 
   // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
