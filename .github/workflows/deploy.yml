@@ -1,5 +1,6 @@
 # push 到 main → 本机无关的自动部署：GitHub 构建前端 → rsync 全量同步 → 重启 systemd
 # 用 rsync 而不是让服务器 git pull：这台服务器访问 github.com 超时（curl 000）
+# 私钥以 base64 存放（单行），避免多行 secret 被截断导致认证失败
 name: 自动部署
 
 on:
