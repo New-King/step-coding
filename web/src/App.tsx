@@ -1681,7 +1681,7 @@ export default function App() {
 
   if (!started) {
     return (
-      <div className={history.length ? "ask-page" : "ask-page empty"}>
+      <div className="ask-page">
         <div className="ask-hero">
           <div className="ask-inner">
             <div className="ask-top">
