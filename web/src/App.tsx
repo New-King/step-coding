@@ -156,6 +156,8 @@ const EXAMPLES: { label: string; ask: string }[] = [
 const HISTORY_KEY = "stepcoding.history.v2";
 const SESSION_KEY = "stepcoding.session.v1";
 const MAX_ROUNDS = 20;
+/** 「最近」最多留几条：满了就不让新建，先删一条或清空 */
+const MAX_HISTORY = 10;
 
 function langOf(name: string) {
   const key = name.toLowerCase();
@@ -570,6 +572,11 @@ export default function App() {
     const value = task.trim();
     if (!value) return;
 
+    if (history.length >= MAX_HISTORY) {
+      setError(`已经有 ${MAX_HISTORY} 条记录了，删掉一条或清空后再开始`);
+      return;
+    }
+
     const player = playerRef.current!;
     player.stop();
     player.paused = false;
@@ -906,7 +913,7 @@ export default function App() {
         updatedAt: Date.now(),
       };
       const rest = prev.filter((_, i) => i !== same);
-      let next = [merged, ...rest].slice(0, 6);
+      let next = [merged, ...rest].slice(0, MAX_HISTORY);
 
       // 浏览器给每个站点约 5MB：塞不下就把最旧的挤掉。留下的这批要同时写进本地，
       // 界面和存储别不一样——否则这里显示着的记录，刷新一下就成了"又没了"。

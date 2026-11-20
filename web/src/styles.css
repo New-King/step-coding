@@ -1095,7 +1095,8 @@ html[data-theme="dark"] .composer:focus-within {
   /* safe center：内容比窗口高时从顶部开始，不会被居中挤掉上半截 */
   align-items: safe center;
   justify-items: center;
-  padding: 52px 28px 88px;
+  /* 底部留白比顶部多 136px：居中后整块上移 50px，视觉重心不偏下 */
+  padding: 52px 28px 188px;
 }
 
 .ask-inner {
@@ -1347,7 +1348,7 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
 
 /* 最近：日志式的行，细线分隔 */
 .ask-history {
-  margin-top: 52px;
+  margin-top: 24px;
 }
 
 .history-title {
@@ -3313,7 +3314,7 @@ html[data-theme="dark"] .line .acts button.danger:hover {
   }
 
   .ask-history {
-    margin-top: 32px;
+    margin-top: 20px;
   }
 
   /* 一行放不下「未完成」，状态交给前面的勾 / 空圈 */
