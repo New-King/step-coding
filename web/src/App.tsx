@@ -193,6 +193,9 @@ function langOf(name: string) {
   return "javascript";
 }
 
+/** 带 HTTP 状态码的错误：重试策略要看状态码，不能靠消息文本猜。 */
+type HttpError = Error & { status?: number };
+
 async function request(url: string, body: unknown, method = "POST") {
   const res = await fetch(url, {
     method,
@@ -201,12 +204,15 @@ async function request(url: string, body: unknown, method = "POST") {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `请求失败 ${res.status}`);
+    const err: HttpError = new Error(detail.detail || `请求失败 ${res.status}`);
+    // 后端 4xx 一般带 detail（"额度用完了"），消息里没有状态码，必须单独记下来
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
 
-/** 幂等重试：同一轮重复发不会重复执行，所以可以放心退避重发。 */
+/** 幂等重试：同一轮重复发不会重复执行，所以可以放心退避重发。4xx 不重试。 */
 async function requestWithRetry(url: string, body: unknown, tries = 3) {
   let lastError: unknown;
   for (let i = 0; i < tries; i += 1) {
@@ -214,8 +220,8 @@ async function requestWithRetry(url: string, body: unknown, tries = 3) {
       return await request(url, body);
     } catch (e) {
       lastError = e;
-      const message = String(e);
-      if (/请求失败 (4\d\d)/.test(message)) throw e;
+      const status = (e as HttpError).status;
+      if (status && status < 500) throw e;
       await new Promise((r) => window.setTimeout(r, 400 * (i + 1)));
     }
   }
