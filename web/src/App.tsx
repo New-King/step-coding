@@ -125,6 +125,7 @@ function projectDone(items: Item[]): boolean {
 const EMPTY: Snapshot = {
   buffers: {},
   active: null,
+  mode: null,
   removing: null,
   banner: "",
   hint: "",
@@ -903,8 +904,11 @@ export default function App() {
     }
 
     if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
-      // 进时间线由 playEvent 负责：排队的那一步要等真开始演才写进去，
-      // 否则右边会先说「正在编写 style.css」，左边其实还在打 index.html
+      // 动作一到就进时间线：服务端已经落了盘，过程面板必须记下这一步
+      // （尤其是删除——等演到再记，一暂停就永远看不到它）。
+      // 状态行另算，它跟播放器（snap.mode / snap.active），不跟这里。
+      pushStep(ev);
+      // 还在打上一个文件的话，这一段先排着；循环跟着停，演完再接着往下问
       return playEvent(ev);
     }
 
@@ -954,17 +958,12 @@ export default function App() {
 
     if (p.typingPath) {
       note("play.wait", `${p.typingPath} 还在打，先排着`);
-      // 排队期间不进时间线：状态行读的是时间线最后一条，提前写进去
-      // 就会出现「右边说正在写 css、左边还在打 html」
       afterPlayerRef.current = () => {
         playEvent(ev);
         void pump();
       };
       return true;
     }
-
-    // 真正轮到这一步了，才让它出现在时间线上
-    pushStep(ev);
 
     if (ev.action === "edit") {
       const before = filesRef.current[ev.path] ?? "";
@@ -1600,11 +1599,29 @@ export default function App() {
   const lastItem = items[items.length - 1];
   const typingOut = lastItem?.ev.action === "finish" && !!lastItem.pending;
 
+  /**
+   * 状态行认播放器，不认新到的事件。
+   *
+   * 事件到手时服务端已经落盘，时间线立刻记一笔（删除必须留痕）；
+   * 但画面可能还在打上一个文件，文案要是读事件就会「右边说在写 css、左边还在打 html」。
+   * 所以只要播放器手上还有活（snap.mode），就说它正在干的那件事。
+   */
+  const playerLabel = !snap.mode || !snap.active
+    ? ""
+    : paused
+      ? `已暂停 · 停在 ${snap.active}`
+      : snap.mode === "delete"
+        ? `正在删除 ${snap.active}`
+        : snap.mode === "edit"
+          ? `正在修改 ${snap.active}`
+          : `正在编写 ${snap.active}`;
+
   const liveLabel = waitingFirst
     ? WAITING_WORDS[waitWord]
-    : typingOut && snap.typing && snap.active
-      ? `正在编写 ${snap.active}`
-      : liveStatusOf(items, pending, askIndex, running, paused);
+    : playerLabel
+      || (typingOut && snap.typing && snap.active
+        ? `正在编写 ${snap.active}`
+        : liveStatusOf(items, pending, askIndex, running, paused));
   const runTime = runStartRef.current ? elapsedText(elapsed) : "";
   /** 还在跑（或暂停着）：过程块那行说的是「正在做的事」，而不是「过程 · N 步」 */
   const tailLive = running || paused;

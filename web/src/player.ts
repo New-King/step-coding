@@ -22,11 +22,15 @@ export type Plan = {
  * 现在慢就是慢：1500 字的文件在 60 cps 下约 25 秒，想快自己把滑杆推上去。
  */
 
+/** 正在演的动作：状态行要跟它，不能跟新到的事件（否则右边说 css、左边还在打 html） */
+export type PlayMode = "create" | "append" | "edit" | "delete" | null;
+
 export type Snapshot = {
   buffers: Record<string, string>;
   active: string | null;
   /** 正在演删除的文件：还在列表里淡出，过一会儿才真的拿掉 */
   removing: string | null;
+  mode: PlayMode;
   banner: string;
   /** 打字打到的这一小块在干什么（最近的注释 / 函数 / 选择器），没有就是空串 */
   hint: string;
@@ -320,6 +324,8 @@ export class Player {
   /** 正在演"删除"的那个文件：先停在它上面转一眼，到点再从列表里拿掉 */
   private deleting: string | null = null;
   private deleteAt = 0;
+  /** 正在演的动作类型：状态行认它，不认新到的事件（新事件可能还在队列里） */
+  private mode: PlayMode = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   paused = false;
@@ -397,6 +403,7 @@ export class Player {
     this.cursor = 0;
     this.buffers = { ...this.buffers, [t.path]: t.shown };
     this.active = t.path;
+    this.mode = "append";
     if (t.banner) this.banner = t.banner;
     this.pending = t.rest;
     this.pendingPath = t.path;
@@ -458,6 +465,7 @@ export class Player {
     this.buffers = { ...files };
     this.pending = "";
     this.pendingPath = "";
+    this.mode = null;
     this.emit();
   }
 
@@ -503,6 +511,7 @@ export class Player {
     this.pending = "";
     this.pendingPath = "";
     this.deleting = null;
+    this.mode = null;
     this.finished = true;
     this.emit();
   }
@@ -516,6 +525,7 @@ export class Player {
     this.waitUntil = 0;
     this.deleting = null;
     this.deleteAt = 0;
+    this.mode = null;
     this.finished = false;
     this.paused = false;
     this.start();
@@ -538,6 +548,7 @@ export class Player {
     if (this.deleting && now >= this.deleteAt) {
       delete this.buffers[this.deleting];
       this.deleting = null;
+      this.mode = null;
       this.active = Object.keys(this.buffers)[0] ?? null;
       this.emit();
     }
@@ -564,7 +575,11 @@ export class Player {
 
         if (chunk.endsWith("\n")) this.waitUntil = now + 90 * this.pace;
       }
-      if (!this.pending) this.pendingPath = "";
+      if (!this.pending) {
+        this.pendingPath = "";
+        // 这一步打完了：状态行交回给事件流（接下来可能是 think / look）
+        this.mode = null;
+      }
       this.emit();
     } else {
       this.advance(now);
@@ -585,12 +600,14 @@ export class Player {
     switch (step.type) {
       case "banner":
         this.banner = step.text;
+        this.mode = null;
         this.waitUntil = now + (step.delay ?? 340) * this.pace;
         break;
 
       case "create":
         this.buffers[step.path] = "";
         this.active = step.path;
+        this.mode = "create";
         this.banner = step.banner;
         this.pending = step.code;
         this.pendingPath = step.path;
@@ -600,6 +617,7 @@ export class Player {
 
       case "append": {
         this.active = step.path;
+        this.mode = "append";
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         this.pending = step.code;
@@ -610,6 +628,7 @@ export class Player {
 
       case "edit": {
         this.active = step.path;
+        this.mode = "edit";
         this.banner = step.banner;
         const body = this.buffers[step.path] ?? "";
         const idx = body.indexOf(step.find);
@@ -631,6 +650,7 @@ export class Player {
         // 先停在要删的那个文件上（左侧高亮、右上角说正在删），过一会儿才真的拿掉，
         // 拿掉的同一刻选中回到第一个文件——别一上来就跳走，看起来像删错了文件
         this.active = step.path;
+        this.mode = "delete";
         this.banner = step.banner;
         this.deleting = step.path;
         this.deleteAt = now + Math.max(240, 320 * this.pace);
@@ -639,6 +659,7 @@ export class Player {
 
       case "done":
         this.banner = "完成";
+        this.mode = null;
         this.say = step.text;
         this.finished = true;
         this.waitUntil = now + (step.delay ?? 400) * this.pace;
@@ -665,6 +686,7 @@ export class Player {
     this.onUpdate({
       buffers: { ...this.buffers },
       active: this.active,
+      mode: this.mode,
       removing: this.deleting,
       banner: this.banner,
       hint: this.hint,
