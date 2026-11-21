@@ -38,6 +38,8 @@ type Event =
   | { action: "edit"; path: string; label: string; find: string; replace: string }
   | { action: "delete"; path: string; label: string }
   | { action: "error"; text: string }
+  /** 这一小步被规则拦下（没先 look、文件已存在…）：算过程，模型下一跳会照做 */
+  | { action: "blocked"; tool: string; path: string; text: string }
   | { action: "finish"; text: string }
   /** warn：不是故障、但要提一句的提示（如额度用完），按普通回话铺开，只换底色 */
   | { action: "say"; text: string; warn?: boolean }
@@ -91,7 +93,16 @@ type HistoryItem = {
 const TERMINAL_KINDS = new Set(["say", "finish", "decline"]);
 
 /** 时间线分成两类：对话（用户 / 回话 / 提问 / 拒绝 / 收尾 / 报错）和过程（思考、查看、计划、搜索、写改删） */
-const PROCESS_KINDS = new Set(["think", "look", "plan", "search", "write", "edit", "delete"]);
+const PROCESS_KINDS = new Set([
+  "think",
+  "look",
+  "plan",
+  "search",
+  "write",
+  "edit",
+  "delete",
+  "blocked",
+]);
 
 /** 真会动文件的三类：重播时按它们把时间线分步放回去 */
 const FILE_KINDS = new Set(["write", "edit", "delete"]);
@@ -253,7 +264,8 @@ export default function App() {
   const [pending, setPending] = useState<{ question: string; options: string[] }[] | null>(null);
   const [askIndex, setAskIndex] = useState(0);
   const [askAnswers, setAskAnswers] = useState<string[]>([]);
-  const [declined, setDeclined] = useState<Extract<Event, { action: "decline" }> | null>(null);
+  // 拒绝的正文和建议直接进时间线（与普通回话同款），这里只留个位置标记
+  const [, setDeclined] = useState<Extract<Event, { action: "decline" }> | null>(null);
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -916,6 +928,12 @@ export default function App() {
       pushStep(ev);
       // 还在打上一个文件的话，这一段先排着；循环跟着停，演完再接着往下问
       return playEvent(ev);
+    }
+
+    if (ev.action === "blocked") {
+      // 过程里的一步：原因已经写回历史，模型下一跳会照做，不该弹红条中断
+      pushStep(ev);
+      return false;
     }
 
     if (ev.action === "error") {
@@ -1915,28 +1933,6 @@ export default function App() {
 
             {composer({ prompt: "›", send: "run", autoFocus: false })}
 
-            {declined && (
-              <div className="decline-card">
-                <div className="decline-text">{declined.text}</div>
-                {declined.suggestions.length > 0 && (
-                  <div className="decline-ideas">
-                    {declined.suggestions.map((idea) => (
-                      <button
-                        key={idea}
-                        className="ask-chip"
-                        onClick={() => {
-                          setDeclined(null);
-                          void start(idea);
-                        }}
-                      >
-                        {idea}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
             {error && <div className="ask-error">{error}</div>}
 
             {history.length > 0 && (
@@ -2411,6 +2407,7 @@ function labelOf(action: string) {
     delete: "删除",
     finish: "完成",
     decline: "拒绝",
+    blocked: "被拦",
     error: "出错",
     user: "你",
   };
@@ -2437,6 +2434,8 @@ function describeEvent(ev: Event): string {
       return `${ev.path} — ${ev.label}`;
     case "delete":
       return `${ev.path} — ${ev.label}`;
+    case "blocked":
+      return `${ev.path} — ${ev.text}`;
     case "error":
       return ev.text;
     case "user":
@@ -2780,6 +2779,7 @@ function processSummary(items: Item[]) {
   let writes = 0;
   let edits = 0;
   let deletes = 0;
+  let blocked = 0;
   let quiet = 0;
 
   for (const it of items) {
@@ -2787,6 +2787,9 @@ function processSummary(items: Item[]) {
     switch (ev.action) {
       case "look":
         looks.add(ev.path || "根目录");
+        break;
+      case "blocked":
+        blocked += 1;
         break;
       case "search":
         searches += 1;
@@ -2815,6 +2818,7 @@ function processSummary(items: Item[]) {
   if (writes) parts.push(`新建了 ${writes} 个文件`);
   if (edits) parts.push(`编辑了 ${edits} 处`);
   if (deletes) parts.push(`删除了 ${deletes} 个文件`);
+  if (blocked) parts.push(`被拦下 ${blocked} 次`);
 
   if (parts.length === 0) return quiet ? `思考了 ${quiet} 步，没动文件` : "没有动手";
   return parts.join(" · ");
@@ -2906,10 +2910,29 @@ function TimelineItem({
   // finish 还挂着"正在收尾"时，过程块那行已经在说，别在列表里再重复一条
   if (ev.action === "finish" && item.pending) return null;
 
-  // 回话和收尾那句都是给用户看的正文，直接铺开，不缩成可点开的摘要
-  if (ev.action === "say" || ev.action === "finish") {
+  // 回话、收尾、拒绝都是给用户看的正文，一律铺开，不缩成可点开的摘要；
+  // 拒绝额外挂几个能直接点的替代做法
+  if (ev.action === "say" || ev.action === "finish" || ev.action === "decline") {
     const warn = ev.action === "say" && ev.warn === true;
-    return <div className={warn ? "tl say warn" : `tl ${ev.action}`}>{ev.text || "完成"}</div>;
+    return (
+      <div className={warn ? "tl say warn" : `tl ${ev.action}`}>
+        {ev.text || (ev.action === "decline" ? "" : "完成")}
+        {ev.action === "decline" && ev.suggestions.length > 0 && (
+          <div className="decline-ideas">
+            {ev.suggestions.map((idea) => (
+              <button
+                key={idea}
+                className="decline-idea"
+                onClick={() => onIdea?.(idea)}
+                title="点一下就按这个开工"
+              >
+                {idea}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
 
   // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
@@ -2990,6 +3013,17 @@ function summaryOf(ev: Event): ReactNode {
           <span className="op-label">{ev.label}</span>
         </>
       );
+    case "blocked": {
+      const label =
+        ev.tool === "write" ? "新建" : ev.tool === "edit" ? "修改" : ev.tool === "delete" ? "删除" : ev.tool;
+      return (
+        <>
+          <span className="op-tag del">被拦</span>
+          <span className="op-path">{ev.path || label}</span>
+          <span className="op-label">{ev.text.split("\n")[0]}</span>
+        </>
+      );
+    }
     case "decline":
       return <span className="tl-summary-text">{ev.text}</span>;
     case "error":
@@ -3032,6 +3066,7 @@ function detailOf(
   switch (ev.action) {
     case "think":
     case "error":
+    case "blocked":
       return ev.text ? <div className="tl-text">{ev.text}</div> : null;
 
     case "plan":

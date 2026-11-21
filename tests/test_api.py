@@ -222,7 +222,9 @@ def test_edit_mismatch_returns_error_not_crash(client, monkeypatch):
     step(client, 0, "写 a.js", sid="s-edit").json()
     step(client, 1, sid="s-edit").json()
     body = step(client, 2, sid="s-edit").json()
-    assert body["event"]["action"] == "error"
+    assert body["event"]["action"] == "blocked"
+    assert body["event"]["tool"] == "edit"
+    assert body["event"]["path"] == "a.js"
     assert "找不到" in body["event"]["text"]
     assert body["changed"] == {}
     assert session.get("s-edit").files["a.js"] == "let a = 1;\n"

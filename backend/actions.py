@@ -10,6 +10,11 @@ from typing import Any
 
 from .agent_error import AgentError
 
+# 回话正文的上限：一句寒暄几十字就够，但模型会直接把算法/示例代码贴在回复里，
+# 200 字会把它从中间截断（实测断在 `quickSort(a, p + 1, hi`），所以放宽到能装下一段代码。
+SAY_CHARS = 2000
+
+
 def normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
     if kind not in {
@@ -26,7 +31,7 @@ def normalize(raw: dict[str, Any]) -> dict[str, Any]:
         text = str(raw.get("text") or "").strip()
         if not text:
             raise AgentError("say 没有内容")
-        return {"action": "say", "text": text[:200]}
+        return {"action": "say", "text": text[:SAY_CHARS]}
     if kind == "decline":
         text = str(raw.get("text") or "").strip()
         if not text:

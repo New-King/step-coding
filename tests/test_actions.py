@@ -70,3 +70,10 @@ def test_unknown_action_is_rejected():
         normalize({"action": "teleport"})
     with pytest.raises(AgentError):
         normalize({})
+
+def test_say_keeps_code_block_over_200_chars():
+    """回复里直接贴代码是正常用法：200 字的老上限会把它从中间截断（实测断在 `quickSort(a, p + 1, hi`）。"""
+    code = "```ts\n" + "\n".join(f"const v{i} = {i};" for i in range(30)) + "\n```"
+    out = normalize({"action": "say", "text": code})
+    assert out["text"] == code
+    assert out["text"].endswith("```")

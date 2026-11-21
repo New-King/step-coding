@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import search
-from .actions import normalize
+from .actions import SAY_CHARS, normalize
 from .agent_error import AgentError, TruncatedError
 from .context import content as read_content
 from .context import manifest
@@ -165,7 +165,8 @@ def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any
 
     if not calls:
         text = (msg.get("content") or "").strip()
-        action = {"action": "say", "text": text[:200] or "……"}
+        # 模型没走 say 工具、直接把话写在 content 里：同一套上限，别在这一路砍短
+        action = {"action": "say", "text": text[:SAY_CHARS] or "……"}
         return action, {"role": "assistant", "content": text}, None
 
     call = calls[0]
@@ -392,8 +393,15 @@ def step(
     if action["action"] in {"write", "edit", "delete"}:
         state, problem = apply_fs(action, files, observed)
         if problem:
+            # 「没先 look 就删」「文件已存在」这类是这一小步被拦下，不是系统故障：
+            # 错误原样写回历史，下一跳它会照做；界面上按过程显示，不弹红条。
             return {
-                "event": {"action": "error", "text": problem},
+                "event": {
+                    "action": "blocked",
+                    "tool": action["action"],
+                    "path": action.get("path", ""),
+                    "text": problem,
+                },
                 "messages": _record(messages, assistant, call, {"ok": False, "error": problem}),
                 "files": files,
             }
