@@ -1,0 +1,32 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - generic [ref=e7]: step-coding · ready
+    - generic [ref=e9]:
+      - button "切到深色" [ref=e10] [cursor=pointer]
+      - link "GitHub 仓库" [ref=e14] [cursor=pointer]:
+        - /url: https://github.com/New-King/step-coding
+  - heading "Take your time" [level=1] [ref=e17]
+  - paragraph [ref=e19]: 先想 → 再看 → 再问 → 再动手。代码一行一行写在屏幕上，慢一点也看得清。
+  - generic [ref=e21]:
+    - generic [ref=e22]:
+      - button "登录注册是怎么回事" [ref=e23] [cursor=pointer]
+      - button "function call 怎么调起来的" [ref=e24] [cursor=pointer]
+      - button "LangGraph 的节点怎么串" [ref=e25] [cursor=pointer]
+      - button "快速排序为什么快" [ref=e26] [cursor=pointer]
+      - button "爬虫怎么抓到数据" [ref=e27] [cursor=pointer]
+      - button "批量改文件名靠什么" [ref=e28] [cursor=pointer]
+      - button "单元测试在测什么" [ref=e29] [cursor=pointer]
+      - button "Docker 到底做了什么" [ref=e30] [cursor=pointer]
+    - generic [aria-hidden] [ref=e31]:
+      - button [ref=e32] [cursor=pointer]: 登录注册是怎么回事
+      - button [ref=e33] [cursor=pointer]: function call 怎么调起来的
+      - button [ref=e34] [cursor=pointer]: LangGraph 的节点怎么串
+      - button [ref=e35] [cursor=pointer]: 快速排序为什么快
+      - button [ref=e36] [cursor=pointer]: 爬虫怎么抓到数据
+      - button [ref=e37] [cursor=pointer]: 批量改文件名靠什么
+      - button [ref=e38] [cursor=pointer]: 单元测试在测什么
+      - button [ref=e39] [cursor=pointer]: Docker 到底做了什么
+  - generic [ref=e40]:
+    - generic [ref=e41]: ›
+    - textbox [ref=e42]
+    - button "run" [disabled] [ref=e43]

@@ -41,6 +41,11 @@ class StepIn(BaseModel):
     pending_search: Optional[str] = None
 
 
+class LogIn(BaseModel):
+    session_id: str
+    entries: list[dict[str, Any]]
+
+
 @app.post("/api/session")
 def post_session(body: SessionIn) -> dict[str, Any]:
     """建立或恢复会话。带 messages/files 就是恢复（服务端重启后的兜底）。"""
@@ -112,6 +117,8 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
 
         if body.message:
             sess.messages.append({"role": "user", "content": body.message})
+            # 用户这句话本身也留一行：事后按「他说了什么」就能定位到那一段
+            trace.record_user(body.session_id, body.seq, body.message)
             # 新的一轮从这一步开始计步：步数上限是「一轮最多走几步」，
             # 不是「一个会话总共几步」——按会话算的话第 20 步之后这个会话就不能用了
             sess.turn_start = sess.seq
@@ -175,6 +182,15 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
             "changed": changed,
             "stop": sess.last_stop,
         }
+
+
+@app.post("/api/log")
+def post_log(body: LogIn) -> dict[str, Any]:
+    """前端 note() 上报：和 step 落在同一个 jsonl 里，按时间戳就能对齐。"""
+    if not session.valid_id(body.session_id):
+        raise HTTPException(status_code=400, detail="会话 id 不合法")
+    trace.record_web(body.session_id, body.entries)
+    return {"ok": True}
 
 
 @app.delete("/api/session/{sid}")

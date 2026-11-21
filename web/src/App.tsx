@@ -498,11 +498,38 @@ export default function App() {
     }
   };
 
+  /** 待上报的前端日志：攒一批再发，别每敲一步就一个请求 */
+  const webLogBufRef = useRef<{ t: number; tag: string; text: string }[]>([]);
+  const webLogTimerRef = useRef<number | null>(null);
+
+  /**
+   * 把前端日志发到后端，落到同一个 `var/traces/<会话>.jsonl`。
+   *
+   * 只用于排查：报 bug 时不用你说「第几步」，按时间戳和 step 对齐即可。
+   * 发失败就当没发生，不能影响主流程。
+   */
+  const flushWebLog = () => {
+    webLogTimerRef.current = null;
+    const entries = webLogBufRef.current.splice(0, webLogBufRef.current.length);
+    if (!entries.length || !sessionIdRef.current) return;
+    void fetch("/api/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionIdRef.current, entries }),
+      keepalive: true,
+    }).catch(() => {});
+  };
+
   const note = (tag: string, text: string) => {
     const entry = { t: Date.now(), tag, text };
     logsRef.current = [...logsRef.current.slice(-199), entry];
     setLogs(logsRef.current);
     console.info(`[step-coding] ${tag} · ${text}`);
+    webLogBufRef.current.push({ t: entry.t, tag, text: String(text).slice(0, 500) });
+    if (webLogBufRef.current.length >= 20) flushWebLog();
+    else if (!webLogTimerRef.current) {
+      webLogTimerRef.current = window.setTimeout(flushWebLog, 1000);
+    }
   };
 
   /** 进出重播都走这里：ref 是判断依据，state 只管按钮长什么样 */

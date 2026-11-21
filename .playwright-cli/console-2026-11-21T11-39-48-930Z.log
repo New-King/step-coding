@@ -55,3 +55,5 @@
 [  347412ms] [INFO] [step-coding] pump · event=say stop=true @ http://127.0.0.1:5173/src/App.tsx?t=1795261512176:350
 [  347412ms] [INFO] [step-coding] pump · exit status=running @ http://127.0.0.1:5173/src/App.tsx?t=1795261512176:350
 [  464801ms] [INFO] [step-coding] stop · 本轮结束 @ http://127.0.0.1:5173/src/App.tsx?t=1795261512176:350
+[ 1272646ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:5173/@vite/client:964
+[ 1272694ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5173/node_modules/.vite/deps/chunk-R5YDL4RF.js?v=cce04c07:21609

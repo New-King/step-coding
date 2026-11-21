@@ -43,6 +43,52 @@ def digest(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:12]
 
 
+def _append(session_id: str, rows: list[dict[str, Any]]) -> None:
+    if not SAFE.match(session_id or ""):
+        return
+    try:
+        STORE.mkdir(parents=True, exist_ok=True)
+        with (STORE / f"{session_id}.jsonl").open("a", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def record_user(session_id: str, seq: int, text: str) -> None:
+    """用户这句话本身也记一行：事后按「他说了什么」就能定位到那一段。"""
+    _append(
+        session_id,
+        [
+            {
+                "t": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "ts": int(time.time() * 1000),
+                "src": "user",
+                "seq": seq,
+                "text": _clip(text),
+            }
+        ],
+    )
+
+
+def record_web(session_id: str, entries: list[dict[str, Any]]) -> None:
+    """前端 note() 上报的日志：和 step 落在同一个文件里，按时间就能对上。"""
+    rows = []
+    for e in (entries or [])[:50]:
+        rows.append(
+            {
+                "ts": int(e.get("t") or 0),
+                "t": time.strftime(
+                    "%Y-%m-%dT%H:%M:%S", time.localtime((e.get("t") or 0) / 1000)
+                ),
+                "src": "web",
+                "tag": str(e.get("tag") or "")[:40],
+                "text": _clip(str(e.get("text") or "")),
+            }
+        )
+    _append(session_id, rows)
+
+
 def record(
     session_id: str,
     seq: int,
@@ -59,6 +105,8 @@ def record(
         return
     row = {
         "t": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "ts": int(time.time() * 1000),
+        "src": "api",
         "session": session_id,
         "seq": seq,
         "action": event.get("action"),
@@ -73,9 +121,4 @@ def record(
         "stop": bool(stop),
         "error": error,
     }
-    try:
-        STORE.mkdir(parents=True, exist_ok=True)
-        with (STORE / f"{session_id}.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+    _append(session_id, [row])
