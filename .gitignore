@@ -9,3 +9,6 @@ __pycache__/
 .chrome*/
 logs/
 var/
+
+# 本地笔记，不进仓库
+docs/notes/
