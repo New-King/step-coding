@@ -188,57 +188,19 @@ def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any
 
 
 # 发给模型的历史条数上限（可用 HISTORY_KEEP 环境变量覆盖）
-HISTORY_KEEP = int(os.environ.get("HISTORY_KEEP") or 20)
-# 工具参数里超过这么多字符的正文（写文件的 code、改文件的 replace）在历史里换成一句说明
-SLIM_THRESHOLD = 400
-# 历史里单条工具结果的上限（可用 TOOL_KEEP 环境变量覆盖）
-# 实测同一任务：4000 时平均 9.9 万 token，1200 时平均 5 万，产物质量一致
-TOOL_KEEP = int(os.environ.get("TOOL_KEEP") or 1200)
+# 一个任务（建三个文件 + 改引用）要十几步，窗口太小会把开头丢掉
+HISTORY_KEEP = int(os.environ.get("HISTORY_KEEP") or 40)
+# 工具结果写进历史时**不压内容**，这个上限只是防止单条把上下文顶爆。
+# 真触发了也必须让模型看见「被截断了」，不能让它以为手里就是全文。
+RECORD_KEEP = 200000
 
-
-def _slim(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """历史里不再重复带着整份代码：文件本身就是真源，要改先 look 一次就有原文。
-
-    只改发给模型的副本，`sess.messages` 里那份保持原样（重播、落盘还靠它）。
-    """
-    out: list[dict[str, Any]] = []
-    for m in messages:
-        # 工具结果也可能很长（look 读整个项目），历史里截断，要细节再 look
-        if m.get("role") == "tool":
-            body = m.get("content") or ""
-            if len(body) > TOOL_KEEP:
-                out.append({**m, "content": body[:TOOL_KEEP] + "…（已截断，需要完整内容再 look）"})
-                continue
-            out.append(m)
-            continue
-
-        calls = m.get("tool_calls") or []
-        if m.get("role") != "assistant" or not calls:
-            out.append(m)
-            continue
-
-        kept: list[dict[str, Any]] = []
-        changed = False
-        for call in calls:
-            fn = dict(call.get("function") or {})
-            args = loads(fn.get("arguments") or "{}")
-            # write_file 的正文参数叫 content（工具 schema 里就是这么写的）
-            for field, note in (
-                ("content", "已写入"),
-                ("code", "已写入"),
-                ("replace", "已改入"),
-                ("find", "待替换原文"),
-            ):
-                body = args.get(field)
-                if isinstance(body, str) and len(body) > SLIM_THRESHOLD:
-                    path = args.get("path") or "文件"
-                    args[field] = f"（{note} {path} 的 {len(body)} 字符，内容见项目文件，要改先 look）"
-                    changed = True
-            if changed:
-                fn["arguments"] = json.dumps(args, ensure_ascii=False)
-            kept.append({**call, "function": fn})
-        out.append({**m, "tool_calls": kept} if changed else m)
-    return out
+# 历史**只按条数裁，不改内容**。
+#
+# 这里曾经把模型自己写过的 content / find / replace（>400 字符）换成
+# 「（已写入 x 的 6120 字符，内容见项目文件，要改先 look）」，还把旧工具结果压到 1200 字符。
+# 结果是模型看到的历史是假的：它照着占位符的口气写文件（app.js 真被写成了这句话），
+# 拆文件时手里没有原文，只能凭印象整份重写——用户在界面上看到的就是「说了做不到」。
+# 空间靠 `_recent` 的条数窗口控制；**不要**再往历史里插占位符。
 
 
 USER_PIN = 8  # 被裁掉的那段里，最多补回几条用户指令
@@ -254,7 +216,7 @@ def _recent(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     - tool 消息必须跟它那条 assistant(tool_calls) 一起留，拆开接口会 400。
     """
     if len(messages) <= HISTORY_KEEP:
-        return _slim(list(messages))
+        return list(messages)
 
     head = [messages[0]] if messages[0].get("role") == "user" else []
     rest = messages[len(head):]
@@ -266,7 +228,7 @@ def _recent(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cut = cut[1:]
     while cut and cut[-1].get("tool_calls"):
         cut = cut[:-1]
-    return _slim(head + cut)
+    return head + cut
 
 
 def _record(
@@ -275,16 +237,13 @@ def _record(
     call: dict[str, Any] | None,
     result: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """把"模型说了什么"和"工具返回了什么"都记进历史。"""
+    """把"模型说了什么"和"工具返回了什么"都记进历史（原样，不改写）。"""
     out = messages + [assistant]
     if call is not None:
-        out = out + [
-            {
-                "role": "tool",
-                "tool_call_id": call.get("id", ""),
-                "content": json.dumps(result or {"ok": True}, ensure_ascii=False)[:4000],
-            }
-        ]
+        raw = json.dumps(result or {"ok": True}, ensure_ascii=False)
+        if len(raw) > RECORD_KEEP:
+            raw = raw[:RECORD_KEEP] + "…（这一条太长，已截断；要完整原文用 look 读那一个文件）"
+        out = out + [{"role": "tool", "tool_call_id": call.get("id", ""), "content": raw}]
     return out
 
 
@@ -343,26 +302,36 @@ def step(
     elif streak == REPEAT_THRESHOLDS[1]:
         messages = messages + [{"role": "user", "content": FIRM}]
 
+    # 新一轮的第一跳：把当前项目清单附在最后。
+    # 不放进 system（会破掉前缀缓存），也不写进 sess.messages（只在这次请求里用）。
+    # 有了它，模型不用先 look("") 就知道有哪些文件、多大，才能判断该改哪个、该不该删。
+    ambient: list[dict[str, Any]] = []
+    if round_no == 0:
+        ambient = [{"role": "user", "content": f"当前项目：\n{manifest(files)}"}]
+
     try:
-        action, assistant, call = _call([system, *_recent(messages)])
+        action, assistant, call = _call([system, *_recent(messages), *ambient])
     except TruncatedError:
         # 被截断时给一次机会：提示它把文件拆小，再试一轮
         nudge = {
             "role": "user",
             "content": "上一次输出被截断了。把这次要写的内容精简，必要时拆成两个文件，一次只写一个。",
         }
-        action, assistant, call = _call([system, *_recent(messages), nudge])
+        action, assistant, call = _call([system, *_recent(messages), *ambient, nudge])
 
     if action["action"] == "ask":
         return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] in {"say", "finish"}:
         missing = claims_missing(action.get("text", ""), files)
+        demand = ""
         if missing:
             demand = (
                 f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
                 "不要只说，直接调用 write_file 把它写出来。"
             )
+
+        if demand:
             retry_messages = _record(messages, assistant, call, {"ok": False, "error": demand})
             retry_action, retry_assistant, retry_call = _call(
                 [system, *_recent(retry_messages), {"role": "user", "content": demand}]
@@ -404,7 +373,9 @@ def step(
                 if observed is not None:
                     observed.add(path)
                 detail = read_content(files, [path])
-                result = {"ok": True, "content": detail[:6000]}
+                # 读全文，不截断：拆文件 / 改一段都要逐字对原文，
+                # 截了模型就只能凭印象整份重写（实测踩过）
+                result = {"ok": True, "content": detail}
             else:
                 detail = f"{path} 不存在。\n{manifest(files)}"
                 result = {"ok": False, "error": detail[:6000]}
@@ -440,7 +411,11 @@ def step(
             "message": f"{done}当前文件：{', '.join(state) or '无'}。做完就 finish，不要重复同一个动作。",
             "files": list(state),
         }
-        return {"event": action, "messages": _record(messages, assistant, call, result), "files": state}
+        return {
+            "event": action,
+            "messages": _record(messages, assistant, call, result),
+            "files": state,
+        }
 
     # think / plan 不结束这一轮，继续往下走
     return {

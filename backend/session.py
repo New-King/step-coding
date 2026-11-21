@@ -69,6 +69,8 @@ class Session:
         self.messages: list[dict[str, Any]] = list(messages or [])
         self.files: dict[str, str] = dict(files or {})
         self.seq = seq
+        # 这一轮（这条用户消息）是从第几步开始的：步数上限按轮算，不按会话累计算
+        self.turn_start = seq
         self.last_event: Optional[dict[str, Any]] = None
         self.last_stop = False
         self.observed: set[str] = set()
@@ -88,6 +90,7 @@ class Session:
             "messages": self.history(),
             "files": self.files,
             "seq": self.seq,
+            "turn_start": self.turn_start,
             "last_event": self.last_event,
             "last_stop": self.last_stop,
             "observed": sorted(self.observed),
@@ -119,6 +122,8 @@ class Session:
                 data.get("files"),
                 int(data.get("seq") or 0),
             )
+            # 老会话文件没有 turn_start：按当前 seq 算，别一加载就判「步数到上限」
+            sess.turn_start = int(data.get("turn_start", sess.seq))
             sess.last_event = data.get("last_event")
             # 旧会话文件没有 last_stop：按最后动作推断，回放时也能带回正确的 stop
             inferred_stop = (sess.last_event or {}).get("action") in {

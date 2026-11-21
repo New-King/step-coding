@@ -6,6 +6,11 @@ def test_claims_missing_catches_file_not_written():
     assert claims_missing("已经写了 README.md 和 index.html", {"index.html": ""}) == ["README.md"]
 
 
+def test_delete_claim_is_not_a_write_claim():
+    # "已删除 style.css" 不是"我说我写了它"，不能被守卫退回
+    assert claims_missing("已删除 style.css 和 app.js", {"index.html": "<h1></h1>"}) == []
+
+
 def test_claims_missing_accepts_nested_paths_and_existing_files():
     files = {"src/app.js": "x", "README.md": "y"}
     assert claims_missing("改好了 app.js，也更新了 README.md", files) == []

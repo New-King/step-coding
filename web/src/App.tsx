@@ -824,6 +824,18 @@ export default function App() {
     }
   };
 
+  /**
+   * 等循环真正停下来。
+   * 暂停只是改了状态，正在飞的那次请求还会跑完；不等它落地就开新一轮，
+   * 新消息会被旧循环带走，界面上就是「说了没反应」。
+   */
+  const waitPumpIdle = async () => {
+    const deadline = Date.now() + 20000;
+    while (pumpingRef.current && Date.now() < deadline) {
+      await new Promise((r) => window.setTimeout(r, 60));
+    }
+  };
+
   const pushStep = (ev: Event, extra: { pending?: boolean } = {}) => {
     push(ev, { ms: lastMsRef.current, ...extra });
     lastMsRef.current = 0;
@@ -891,8 +903,8 @@ export default function App() {
     }
 
     if (ev.action === "write" || ev.action === "edit" || ev.action === "delete") {
-      pushStep(ev);
-      // 还在打上一个文件的话，这一段先排着；循环跟着停，演完再接着往下问
+      // 进时间线由 playEvent 负责：排队的那一步要等真开始演才写进去，
+      // 否则右边会先说「正在编写 style.css」，左边其实还在打 index.html
       return playEvent(ev);
     }
 
@@ -942,12 +954,17 @@ export default function App() {
 
     if (p.typingPath) {
       note("play.wait", `${p.typingPath} 还在打，先排着`);
+      // 排队期间不进时间线：状态行读的是时间线最后一条，提前写进去
+      // 就会出现「右边说正在写 css、左边还在打 html」
       afterPlayerRef.current = () => {
         playEvent(ev);
         void pump();
       };
       return true;
     }
+
+    // 真正轮到这一步了，才让它出现在时间线上
+    pushStep(ev);
 
     if (ev.action === "edit") {
       const before = filesRef.current[ev.path] ?? "";
@@ -985,7 +1002,9 @@ export default function App() {
       task: ev.label,
       steps: [step],
       files,
-      initial: { ...filesRef.current },
+      // 起点用播放器当前的进度，不能拿 filesRef：那里已经是写完的完整内容，
+      // 新文件会先整份闪一下，再被 create 清空重打
+      initial: p.files(),
       stats: { files: Object.keys(files).length, steps: 1, lines: 0 },
     });
 
@@ -1161,11 +1180,22 @@ export default function App() {
     }
 
     if (statusRef.current === "running") {
-      // 跑的时候不接受新话：先暂停，再说话
-      note("send.blocked", "正在跑，忽略这次输入");
-      setQuestion(value);
-      return;
+      // 跑着的时候直接说话 = 打断：先刹车，等手上这一步落地再按新方向开
+      statusRef.current = "paused";
+      setRunning(false);
+      note("send.interrupt", "打断正在跑的这一轮");
+      await waitPumpIdle();
+      playerRef.current!.finishNow();
     }
+
+    // 暂停时可能还有一次请求在路上：等它落地再开新一轮，
+    // 否则新消息会和它挤在同一个循环里，看起来就是「说了没反应」
+    if (pumpingRef.current) {
+      note("send.wait", "等上一步落地");
+      await waitPumpIdle();
+    }
+    // 上一轮正在逐字演的文件一次落完，不然新消息发出去还在慢慢打字
+    playerRef.current!.finishNow();
 
     playerRef.current!.paused = false;
     setPaused(false);
@@ -1664,7 +1694,11 @@ export default function App() {
   /** 循环正在跑时的目标文件；用户点别处时它仍然指向这里。 */
   const writingPath = stepActive ? snap.active : null;
 
-  const code = activeFile ? snap.buffers[activeFile] ?? filesRef.current[activeFile] ?? "" : "";
+  /*
+   * 只认播放器的缓冲区：服务端的完整内容早就写进 filesRef 了，
+   * 这里一旦回退到它，文件刚创建时会先整份闪一下，再被清空重打。
+   */
+  const code = activeFile ? snap.buffers[activeFile] ?? "" : "";
   const langName = fileList.find((f) => f.path === activeFile)?.lang ?? "javascript";
 
   const highlighted = useMemo(() => {
@@ -1777,7 +1811,7 @@ export default function App() {
    */
   const composer = (opts: { prompt?: string; send?: string; autoFocus?: boolean } = {}) => (
     <div
-      className={`composer ${running ? "busy" : ""}`}
+      className="composer"
       // 点框里任何地方都落到输入框上，不用非得点中那行字
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest("button")) composerRef.current?.focus();
@@ -1795,14 +1829,13 @@ export default function App() {
           }
         }}
         rows={1}
-        disabled={running}
         autoFocus={opts.autoFocus}
       />
       <button
-        className={`composer-send ${opts.send ? "text" : ""}`}
+        className={`composer-send ${opts.send ? "text" : ""} ${running ? "interrupt" : ""}`}
         onClick={() => void send(question)}
-        disabled={running || !question.trim()}
-        title="发送"
+        disabled={!question.trim()}
+        title={running ? "发送并打断当前这一步" : "发送"}
       >
         {opts.send ?? <ArrowUpIcon />}
       </button>

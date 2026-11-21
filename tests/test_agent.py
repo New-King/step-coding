@@ -105,6 +105,59 @@ def test_claim_missing_file_is_forced_into_a_real_write(monkeypatch):
     assert out["messages"][3]["role"] == "tool"
 
 
+def test_inline_style_in_html_is_allowed(monkeypatch):
+    # 单文件是合法需求：用户要「双击就能打开」就允许内联，文件结构不归我们决定
+    code = '<!doctype html>\n<style>\nbody { margin: 0; }\n</style>\n<h1>hi</h1>\n'
+    monkeypatch.setattr(
+        agent,
+        "_call",
+        lambda messages: reply(
+            {
+                "action": "write",
+                "path": "index.html",
+                "label": "新建页面",
+                "code": code,
+                "lang": "html",
+                "overwrite": False,
+            }
+        ),
+    )
+    out = agent.step([], {}, 0)
+    assert out["event"]["action"] == "write"
+    assert out["files"]["index.html"] == code
+
+
+def test_split_html_gets_no_nudge(monkeypatch):
+    code = (
+        '<!doctype html>\n<link rel="stylesheet" href="style.css">\n'
+        '<h1>hi</h1>\n<script src="app.js"></script>\n'
+    )
+    monkeypatch.setattr(
+        agent,
+        "_call",
+        lambda messages: reply(
+            {
+                "action": "write",
+                "path": "index.html",
+                "label": "新建页面",
+                "code": code,
+                "lang": "html",
+                "overwrite": False,
+            }
+        ),
+    )
+    out = agent.step([], {}, 0)
+    assert out["messages"][-1]["role"] == "tool"
+
+
+def test_look_manifest_shows_size_so_model_can_skip():
+    from backend.context import manifest
+
+    text = manifest({"index.html": "<h1>hi</h1>\n" * 100, "app.js": "let a = 1;\n"})
+    assert "100 行 · 1.2 KB" in text
+    assert "app.js  1 行 · 11 B" in text
+
+
 def test_max_rounds_stops(monkeypatch):
     monkeypatch.setattr(
         agent,

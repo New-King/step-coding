@@ -112,6 +112,9 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
 
         if body.message:
             sess.messages.append({"role": "user", "content": body.message})
+            # 新的一轮从这一步开始计步：步数上限是「一轮最多走几步」，
+            # 不是「一个会话总共几步」——按会话算的话第 20 步之后这个会话就不能用了
+            sess.turn_start = sess.seq
 
         before = dict(sess.files)
 
@@ -119,7 +122,7 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
             result = agent.step(
                 sess.messages,
                 sess.files,
-                sess.seq,
+                sess.seq - sess.turn_start,
                 body.pending_search or "",
                 sess.observed,
             )
