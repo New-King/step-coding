@@ -469,9 +469,40 @@ export class Player {
     this.emit();
   }
 
+  /**
+   * 打断时收手：停下动画，清掉没演完的队列，缓冲区对齐服务端的完整内容。
+   *
+   * 不能只 stop()：tick 停了，但 pending 还挂着，下一次动作会以为「还在打字」一直排队，
+   * 而这时没有任何 tick 能把它放出来——界面就永远卡在「正在编写」。
+   */
+  settle(files: Record<string, string>) {
+    this.stop();
+    this.steps = [];
+    this.cursor = 0;
+    this.pending = "";
+    this.pendingPath = "";
+    this.pendingAt = 0;
+    this.deleting = null;
+    this.deleteAt = 0;
+    this.mode = null;
+    this.buffers = { ...files };
+    this.active =
+      this.active && this.buffers[this.active] !== undefined
+        ? this.active
+        : Object.keys(this.buffers)[0] ?? null;
+    this.emit();
+  }
+
   /** 立刻把剩下的步骤全部应用完（打断时用，保证文件是完整的）。 */
   finishNow() {
     this.stop();
+    // 正在逐字打的这一块先补完：只补队列的话，手上这半截会被清掉，
+    // 屏幕上就永远停在打了一半（实测 quicksort.py 停在 19/64 行）。
+    if (this.pending && this.pendingPath) {
+      const body = this.buffers[this.pendingPath] ?? "";
+      const at = Math.min(this.pendingAt, body.length);
+      this.buffers[this.pendingPath] = body.slice(0, at) + this.pending + body.slice(at);
+    }
     while (this.cursor < this.steps.length) {
       const step = this.steps[this.cursor];
       this.cursor += 1;
@@ -510,9 +541,15 @@ export class Player {
     }
     this.pending = "";
     this.pendingPath = "";
-    this.deleting = null;
+    // 正在演的删除也要落地：否则打断后那个文件永远留在缓冲区里
+    // （屏幕上是「文件列表已经没了、代码区还显示它」）
+    if (this.deleting) {
+      delete this.buffers[this.deleting];
+      this.deleting = null;
+    }
     this.mode = null;
     this.finished = true;
+    this.active = Object.keys(this.buffers)[0] ?? null;
     this.emit();
   }
 
@@ -559,7 +596,7 @@ export class Player {
     }
 
     if (this.pending) {
-      // 速度就是滑杆那个数字，加一点呼吸（±8%）让它不像机器人在跑
+      // 速度只认滑杆：不按文件长度偷偷加速，否则档位就没有任何意义
       const speed = this.cps * (1 + Math.sin(now / 900) * 0.08);
       this.carry += (speed * dt) / 1000;
       const take = Math.floor(this.carry);
@@ -573,6 +610,7 @@ export class Player {
         this.buffers[this.pendingPath] = body.slice(0, at) + chunk + body.slice(at);
         this.pendingAt = at + chunk.length;
 
+        // 行尾停顿按当前档位换算，慢档停得久、快档几乎不停
         if (chunk.endsWith("\n")) this.waitUntil = now + 90 * this.pace;
       }
       if (!this.pending) {

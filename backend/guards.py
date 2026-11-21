@@ -12,10 +12,16 @@ import json
 import re
 from typing import Any
 
-from .tools import loads
+from .tools import TOOL_NAME_TO_ACTION, loads
 
 FILE_NAME = r"[\w./-]+\.(?:js|mjs|html|css|py|go|ts|tsx|json|md|sh|rb|java|c|cpp)"
 PATHISH = re.compile(FILE_NAME)
+# 「index.html 已经换成登录表单了」这类宣称：文件在前、变更动词在后。
+# 只认明确的变更动词，避免把「把 style.css 删掉」这种计划当成已完成。
+CHANGE_CLAIM = re.compile(
+    rf"({FILE_NAME})\s*(?:已经|已)?\s*"
+    r"(?:换成|改成|改为|更新为|更新成|重写为|重写成|替换为|替换成|修改为|修改成)"
+)
 # 只有「写了/新建了 + 文件名」才算宣称。单纯提到某个文件名（"把 style.css 删掉"、
 # "已删除 app.js"）不能当成"我说我写了它"——那样守卫会把正常的删除、合并回复退回去。
 WRITE_CLAIM = re.compile(
@@ -36,6 +42,38 @@ def claims_missing(text: str, files: dict[str, str]) -> list[str]:
             continue
         missing.append(name)
     return missing
+
+
+def touched_paths(messages: list[dict[str, Any]]) -> set[str]:
+    """本轮（最后一条用户消息之后）真正动过的文件路径。"""
+    start = 0
+    for i, m in enumerate(messages):
+        if m.get("role") == "user":
+            start = i + 1
+    paths: set[str] = set()
+    for m in messages[start:]:
+        for call in m.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            if TOOL_NAME_TO_ACTION.get(fn.get("name", "")) not in {"write", "edit", "delete"}:
+                continue
+            args = loads(fn.get("arguments") or "{}")
+            path = str(args.get("path") or "").lstrip("./")
+            if path:
+                paths.add(path)
+    return paths
+
+
+def claims_changed(text: str, touched: set[str]) -> list[str]:
+    """说了"x 已经改过"，但这一轮根本没对它做写操作——这是另一种假宣称。"""
+    stale = []
+    for raw in CHANGE_CLAIM.findall(text or ""):
+        name = raw.lstrip("./")
+        if not name or name in stale:
+            continue
+        if name in touched or any(t.endswith("/" + name) for t in touched):
+            continue
+        stale.append(name)
+    return stale
 
 
 REPEAT_THRESHOLDS = (3, 5, 8)

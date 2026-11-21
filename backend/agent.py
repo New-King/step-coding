@@ -31,7 +31,15 @@ from .agent_error import AgentError, TruncatedError
 from .context import content as read_content
 from .context import manifest
 from .fs import apply as apply_fs
-from .guards import FIRM, GENTLE, REPEAT_THRESHOLDS, claims_missing, repeat_streak
+from .guards import (
+    FIRM,
+    GENTLE,
+    REPEAT_THRESHOLDS,
+    claims_changed,
+    claims_missing,
+    repeat_streak,
+    touched_paths,
+)
 from .prompt import SYSTEM
 from .tools import TOOL_NAME_TO_ACTION, TOOLS, loads
 
@@ -324,12 +332,22 @@ def step(
         return {"event": action, "messages": _record(messages, assistant, call), "stop": True}
 
     if action["action"] in {"say", "finish"}:
-        missing = claims_missing(action.get("text", ""), files)
+        text = action.get("text", "")
+        missing = claims_missing(text, files)
+        # 另一种假宣称：说「index.html 已经换成登录页」，但这一轮一次写操作都没做。
+        # 只查文件存不存在拦不住它——文件在，内容没变。
+        stale = claims_changed(text, touched_paths(messages))
+        targets = missing or stale
         demand = ""
         if missing:
             demand = (
                 f"你在回复里提到 {', '.join(missing)}，但项目里没有这个文件。"
                 "不要只说，直接调用 write_file 把它写出来。"
+            )
+        elif stale:
+            demand = (
+                f"你说 {', '.join(stale)} 已经改过了，但这一轮没有对它执行任何写操作。"
+                "不要只说，直接调用 edit_file 或 write_file 把改动落下去。"
             )
 
         if demand:
@@ -349,7 +367,7 @@ def step(
             return {
                 "event": {
                     "action": "say",
-                    "text": f"我还没真的写出 {', '.join(missing)}，刚才那句不算。再说一次我就动手。",
+                    "text": f"我还没真的动过 {', '.join(targets)}，刚才那句不算。再说一次我就动手。",
                 },
                 "messages": retry_messages,
                 "stop": True,

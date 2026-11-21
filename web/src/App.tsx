@@ -432,6 +432,8 @@ export default function App() {
   const seqRef = useRef(0);
   const statusRef = useRef<"idle" | "running" | "waiting" | "paused" | "done">("idle");
   const pumpingRef = useRef(false);
+  /** 循环正在跑时又来了新指令：等这一轮退出后立刻接着跑，不能把消息吞掉 */
+  const pumpQueuedRef = useRef(false);
   const pendingSearchRef = useRef("");
   const pendingMessageRef = useRef<string | null>(null);
   /** 收尾动作（finish / say / decline）等当前文件演完再执行 */
@@ -777,13 +779,15 @@ export default function App() {
    * 唯一的循环驱动：一次只请求一步。
    *
    * 不等动画演完——新动作到了由 `playEvent` 里的 `finishNow()` 收尾，
-   * 只有 `say` / `decline` / `finish` 这类收尾动作才走 `afterAnimation` 等播放器空下来。
+   * 只有文字动作（say / decline / finish）一到就把正在演的文件补完，不等动画。
    */
   const pump = async () => {
     // 重播是纯回放：就算有人误触了暂停/继续，也不能去请求下一步
     if (replayingRef.current) return;
     if (pumpingRef.current) {
-      note("pump", "已在跑，忽略这次触发");
+      // 不能直接丢掉：打断时新消息已经挂上了，丢掉就会永远停在「正在编写」
+      pumpQueuedRef.current = true;
+      note("pump", "已在跑，排队等它退出");
       return;
     }
     pumpingRef.current = true;
@@ -840,18 +844,12 @@ export default function App() {
     } finally {
       pumpingRef.current = false;
       note("pump", `exit status=${statusRef.current}`);
-    }
-  };
-
-  /**
-   * 等循环真正停下来。
-   * 暂停只是改了状态，正在飞的那次请求还会跑完；不等它落地就开新一轮，
-   * 新消息会被旧循环带走，界面上就是「说了没反应」。
-   */
-  const waitPumpIdle = async () => {
-    const deadline = Date.now() + 20000;
-    while (pumpingRef.current && Date.now() < deadline) {
-      await new Promise((r) => window.setTimeout(r, 60));
+      // 退出时还挂着新指令（打断后又发了一句）就接着跑；
+      // 不然新消息只上了屏，永远不会被发出去
+      if (pumpQueuedRef.current) {
+        pumpQueuedRef.current = false;
+        if (statusRef.current === "running") void pump();
+      }
     }
   };
 
@@ -872,8 +870,9 @@ export default function App() {
   /**
    * 收尾动作要等当前文件演完。
    *
-   * 循环和动画是解耦的：模型可能在一个大文件刚开始打字时就返回 finish。
-   * 如果立刻切「已完成」，步骤框、文件 loading 都会消失，但代码还在写。
+   * 模型可能在一个大文件刚开始打字时就返回 say。立刻把「写好了」铺出来，
+   * 屏幕上就是文件还在逐行写、下面已经交差；所以文字排在动画之后。
+   * 动画本身有 6 秒上限（player 里按文件长度自动加速），不会等上几分钟。
    */
   const afterAnimation = (fn: () => void): true => {
     if (playerRef.current!.busy) afterPlayerRef.current = fn;
@@ -980,7 +979,9 @@ export default function App() {
   const playEvent = (ev: Extract<Event, { action: "write" | "edit" | "delete" }>): boolean => {
     const p = playerRef.current!;
 
-    if (p.typingPath) {
+    // 只有播放器真的在跑（tick 还活着）才值得排队：
+    // 停了之后没人会来执行 afterPlayerRef，排着就是永久卡住
+    if (p.typingPath && p.busy) {
       note("play.wait", `${p.typingPath} 还在打，先排着`);
       afterPlayerRef.current = () => {
         playEvent(ev);
@@ -990,7 +991,10 @@ export default function App() {
     }
 
     if (ev.action === "edit") {
-      const before = filesRef.current[ev.path] ?? "";
+      // 必须拿播放器里「改之前」的内容去对原文：
+      // filesRef 在 handleEvent 之前就被 applyChanges 换成了改后结果，
+      // 用它对 find 永远对不上，edit 会直接跳成最终内容、一个字的动画都没有。
+      const before = p.files()[ev.path] ?? "";
       if (!before.includes(ev.find)) {
         // 原文对不上：不要往末尾硬加，直接用服务端算好的内容
         const truth = serverFilesRef.current[ev.path];
@@ -1005,7 +1009,9 @@ export default function App() {
       }
     }
     const files: Record<string, string> = { ...filesRef.current };
-    files[ev.path] = files[ev.path] ?? "";
+    // 删掉的这一步不能再塞回缓冲区：filesRef 里它已经没了，
+    // 这里补回来会让「文件列表已空、代码区还在显示刚删掉的文件」。
+    if (ev.action !== "delete") files[ev.path] = files[ev.path] ?? "";
 
     let step: Step;
     if (ev.action === "write") {
@@ -1202,23 +1208,16 @@ export default function App() {
       return;
     }
 
-    if (statusRef.current === "running") {
-      // 跑着的时候直接说话 = 打断：先刹车，等手上这一步落地再按新方向开
-      statusRef.current = "paused";
-      setRunning(false);
+    // 跑着的时候直接说话 = 打断：消息立刻上屏，不再等手上那次请求落地。
+    // 以前是 await 它（最长 20 秒）再上屏，看起来就是「说了很久才出来」。
+    if (statusRef.current === "running" || pumpingRef.current) {
       note("send.interrupt", "打断正在跑的这一轮");
-      await waitPumpIdle();
-      playerRef.current!.finishNow();
     }
-
-    // 暂停时可能还有一次请求在路上：等它落地再开新一轮，
-    // 否则新消息会和它挤在同一个循环里，看起来就是「说了没反应」
-    if (pumpingRef.current) {
-      note("send.wait", "等上一步落地");
-      await waitPumpIdle();
-    }
-    // 上一轮正在逐字演的文件一次落完，不然新消息发出去还在慢慢打字
-    playerRef.current!.finishNow();
+    // 旧一轮挂着的收尾（say / finish）作废：新指令优先
+    afterPlayerRef.current = null;
+    // 打断收手：停下动画、丢掉没演完的队列，缓冲区对齐服务端内容。
+    // 只 stop() 会留下「还在打字」的假象，下一次动作永远排不上（卡在正在编写）
+    playerRef.current!.settle(filesRef.current);
 
     playerRef.current!.paused = false;
     setPaused(false);
@@ -1226,6 +1225,8 @@ export default function App() {
     resetRunClock();
     statusRef.current = "running";
     pendingMessageRef.current = value;
+    // 循环还在跑就先排队，等它退出时接着把这句话发出去
+    pumpQueuedRef.current = true;
     toastReset();
     setRunning(true);
     push({ action: "user", text: value } as Event);
@@ -1719,11 +1720,10 @@ export default function App() {
   };
 
   const fileList = Object.keys(filesRef.current).map((path) => ({ path, lang: langOf(path) }));
-  const activeFile =
-    peek ??
-    (snap.active && fileList.some((f) => f.path === snap.active)
-      ? snap.active
-      : playerRef.current?.active ?? fileList[0]?.path ?? "");
+  // 只认文件列表里还在的文件：播放器的 active / 缓冲区可能还停在刚删掉的那个上
+  const exists = (path: string | null | undefined): path is string =>
+    !!path && fileList.some((f) => f.path === path);
+  const activeFile = [peek, snap.active, playerRef.current?.active, fileList[0]?.path].find(exists) ?? "";
 
   /** 步骤浮层在转圈：循环在跑，且确实有文件在演 */
   const stepActive = running && snap.total > 0 && !snap.finished;
