@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, search, session, usage
+from . import agent, search, session, trace, usage
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
@@ -117,6 +117,7 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
             sess.turn_start = sess.seq
 
         before = dict(sess.files)
+        started = time.time()
 
         try:
             result = agent.step(
@@ -127,9 +128,24 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
                 sess.observed,
             )
         except agent.AgentError as exc:
+            # 失败也要记账、留痕：这一轮同样花了 token，而且要看得出坏在第几步
+            tokens = agent.take_tokens()
+            usage.add(key, tokens)
+            trace.record(
+                body.session_id,
+                body.seq,
+                {"action": "error"},
+                {},
+                sess.messages,
+                int((time.time() - started) * 1000),
+                tokens,
+                True,
+                str(exc),
+            )
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        usage.add(key, agent.take_tokens())
+        tokens = agent.take_tokens()
+        usage.add(key, tokens)
 
         sess.messages = result["messages"]
         sess.files = result.get("files", sess.files)
@@ -141,10 +157,22 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
         session.put(sess)
         sess.save()
 
+        changed = session.diff(before, sess.files)
+        trace.record(
+            body.session_id,
+            body.seq,
+            result["event"],
+            changed,
+            sess.messages,
+            int((time.time() - started) * 1000),
+            tokens,
+            sess.last_stop,
+        )
+
         return {
             "event": result["event"],
             "seq": sess.seq,
-            "changed": session.diff(before, sess.files),
+            "changed": changed,
             "stop": sess.last_stop,
         }
 

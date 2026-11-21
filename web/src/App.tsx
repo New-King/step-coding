@@ -590,10 +590,11 @@ export default function App() {
     };
     p.onFinish = () => {};
     p.onExhausted = () => {
-      filesRef.current = p.files();
-
-      // 重播演完了：和正常收尾一样，先把浮层切成勾，再收起
+      // 只有重播才拿播放器当数据源（回放没有服务端的 changed 兜底）。
+      // 正常跑的时候 filesRef 由 applyChanges 维护，是服务端真值；
+      // 用播放器的影子缓冲区覆盖它，edit 下一次就再也对不上原文了。
       if (replayingRef.current) {
+        filesRef.current = p.files();
         markReplaying(false);
         // 收尾那句和计划这时才放出来，然后整场记录就齐了
         replayFeed(Number.POSITIVE_INFINITY);
