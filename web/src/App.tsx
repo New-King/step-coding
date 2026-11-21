@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import css from "highlight.js/lib/languages/css";
@@ -270,6 +278,101 @@ export default function App() {
   /** 手机上输入框默认收起，由右下角的悬浮按钮呼出；桌面上这个状态不起作用 */
   const [composerOpen, setComposerOpen] = useState(false);
   const traceRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * 手机端上下分屏：中间那条可以拖。
+   * `paneH` 为 null 时按 CSS 的 2:1 分；拖过之后是固定像素。
+   * 拖动时严格跟手，松手才判断要不要吸附到端点（拖的过程中跳会很生硬）。
+   */
+  const [paneH, setPaneH] = useState<number | null>(null);
+  /** 吸附那一下要一段短过渡；拖动中不能有，否则手感和手指对不上 */
+  const [snapping, setSnapping] = useState(false);
+  const paneHRef = useRef<number | null>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const splitRef = useRef<{ y: number; h: number; max: number } | null>(null);
+
+  /** 离端点这么近就整块让出来 */
+  const SNAP = 100;
+
+  const putPaneH = (v: number | null) => {
+    paneHRef.current = v;
+    setPaneH(v);
+  };
+
+  /** 工作区里能分给上下两块的高度：扣掉文件条、这条手柄和上下两道 gap */
+  const splitSpace = () => {
+    const ws = workspaceRef.current;
+    const pane = paneRef.current;
+    if (!ws || !pane) return null;
+    const filesH = ws.querySelector<HTMLElement>(".files")?.offsetHeight ?? 0;
+    const handleH = ws.querySelector<HTMLElement>(".splitter")?.offsetHeight ?? 0;
+    return { pane, max: Math.max(0, ws.clientHeight - filesH - handleH - 16) };
+  };
+
+  /** 单击恢复初始 2:1：先过渡到对应像素，再交回 CSS 的比例（height 到 auto 没法过渡） */
+  const resetSplit = () => {
+    const space = splitSpace();
+    if (!space) return;
+    setSnapping(true);
+    putPaneH(Math.round((space.max * 2) / 3));
+    window.setTimeout(() => {
+      setSnapping(false);
+      putPaneH(null);
+    }, 200);
+  };
+
+  const splitDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const space = splitSpace();
+    if (!space) return;
+    const handle = e.currentTarget;
+    splitRef.current = { y: e.clientY, h: space.pane.offsetHeight, max: space.max };
+    setSnapping(false);
+    handle.setPointerCapture(e.pointerId);
+  };
+
+  const splitMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = splitRef.current;
+    if (!d) return;
+    const raw = d.h + (e.clientY - d.y);
+    putPaneH(Math.min(d.max, Math.max(0, raw)));
+  };
+
+  const splitUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = splitRef.current;
+    splitRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (!d) return;
+
+    // 按下几乎没动：当成单击，回到初始比例（已经是初始比例就不用管）
+    if (Math.abs(e.clientY - d.y) < 5) {
+      if (paneHRef.current !== null) resetSplit();
+      return;
+    }
+
+    const cur = paneHRef.current;
+    if (cur === null) return;
+    const target = cur < SNAP ? 0 : cur > d.max - SNAP ? d.max : cur;
+    if (target !== cur) {
+      setSnapping(true);
+      putPaneH(target);
+      window.setTimeout(() => setSnapping(false), 220);
+    }
+  };
+
+  /* 转屏 / 改窗口大小：像素值不再可靠，退回默认比例 */
+  useEffect(() => {
+    if (paneH === null) return;
+    const reset = () => putPaneH(null);
+    window.addEventListener("resize", reset);
+    window.addEventListener("orientationchange", reset);
+    return () => {
+      window.removeEventListener("resize", reset);
+      window.removeEventListener("orientationchange", reset);
+    };
+  }, [paneH]);
 
   /* 点抽屉外面就收起：手机上尤其需要，不然得再点一次日志按钮 */
   useEffect(() => {
@@ -1934,7 +2037,7 @@ export default function App() {
         </button>
       </header>
 
-      <main className="workspace">
+      <main className="workspace" ref={workspaceRef}>
         <aside className="files">
           <div className="files-title">
             文件
@@ -1964,7 +2067,11 @@ export default function App() {
           <div className="files-foot">{fileList.length ? `${countLines(filesRef.current)} 行` : "—"}</div>
         </aside>
 
-        <section className="pane">
+        <section
+          className={`pane ${paneH === null ? "" : "manual"} ${snapping ? "snapping" : ""}`}
+          ref={paneRef}
+          style={paneH === null ? undefined : { height: paneH }}
+        >
           <div className="code-card">
             <div className="code-head">
               <span className="code-path">{activeFile || "等待第一步"}</span>
@@ -2044,6 +2151,18 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        <div
+          className="splitter"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="拖动调整代码区和对话区的高度，单击恢复默认比例"
+          title="单击恢复默认比例"
+          onPointerDown={splitDown}
+          onPointerMove={splitMove}
+          onPointerUp={splitUp}
+          onPointerCancel={splitUp}
+        />
 
         <aside className={`chat ${composerOpen ? "composer-open" : ""}`}>
           <div

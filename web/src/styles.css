@@ -307,6 +307,21 @@ html[data-theme="dark"] .tool:disabled:hover {
   display: none;
 }
 
+/*
+ * 触屏没有真正的 hover：点完按钮元素会一直停在 hover 态，
+ * 气泡就挂在屏幕上不走了。手机上干脆不显示。
+ */
+@media (hover: none) {
+  .tip::after {
+    display: none;
+  }
+}
+
+/* 上下分屏的拖拽条：只在手机端出现（桌面是三栏，不需要） */
+.splitter {
+  display: none;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -3102,9 +3117,55 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     min-height: 0;
   }
 
+  /* 拖过分隔条之后：代码区吃固定高度，对话区拿剩下的 */
+  .pane.manual {
+    flex: none;
+    overflow: hidden;
+  }
+
+  /* 松手吸附那一下走过渡；拖动中加 snapping=false，保证跟手 */
+  .pane.manual.snapping {
+    transition: height 0.18s var(--ease);
+  }
+
   .chat {
     flex: 1 1 0;
     min-height: 0;
+  }
+
+  /*
+   * 中间这条：按住上下拖，松手时靠近端点就让一方整块占满。
+   * 视觉只占 12px（比原来的 14px 窄一档），::before 把可点范围撑到 24px。
+   */
+  .splitter {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    height: 12px;
+    margin: -4px 0;
+    cursor: row-resize;
+    touch-action: none;
+  }
+
+  .splitter::before {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
+  }
+
+  .splitter::after {
+    content: "";
+    width: 34px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--line-strong);
+    transition: background 0.15s var(--ease);
+  }
+
+  .splitter:active::after {
+    background: var(--muted);
   }
 
   /* 顶栏、文件条、输入框都用同一层玻璃 */
