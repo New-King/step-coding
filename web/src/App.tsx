@@ -805,15 +805,20 @@ export default function App() {
         }
 
         const t0 = Date.now();
+        // 先把这一轮要发的东西取走并清空，再 await。
+        // 否则请求返回时会清掉打断期间刚写进来的新消息，界面上就是「说了没反应」。
+        const message = pendingMessageRef.current;
+        const pendingSearch = pendingSearchRef.current;
+        pendingMessageRef.current = null;
+        pendingSearchRef.current = "";
+
         const res = await requestWithRetry("/api/step", {
           session_id: sessionIdRef.current,
           seq: seqRef.current,
-          message: pendingMessageRef.current,
-          pending_search: pendingSearchRef.current || null,
+          message,
+          pending_search: pendingSearch || null,
         });
 
-        pendingMessageRef.current = null;
-        pendingSearchRef.current = "";
         lastMsRef.current = Date.now() - t0;
         seqRef.current = res.seq;
 
@@ -909,6 +914,8 @@ export default function App() {
     }
 
     if (ev.action === "ask") {
+      // 打断后新指令优先：旧轮次的问题不要再弹出来占住输入框
+      if (pendingMessageRef.current) return true;
       pushStep(ev);
       if (Object.keys(filesRef.current).length > 0) remember(filesRef.current);
       setPending(ev.questions);
@@ -1042,6 +1049,12 @@ export default function App() {
   };
 
   const finish = (text: string) => {
+    // 打断时已经挂了新指令：这一轮的收尾不能把状态改成「已完成」，
+    // 否则循环退出，新消息永远发不出去
+    if (pendingMessageRef.current) {
+      pumpQueuedRef.current = true;
+      return;
+    }
     statusRef.current = "done";
     setRunning(false);
     toastSettle();
@@ -1236,6 +1249,11 @@ export default function App() {
   };
 
   const stopRun = () => {
+    // 同上：打断时挂了新指令，旧轮次的话不该结束整轮
+    if (pendingMessageRef.current) {
+      pumpQueuedRef.current = true;
+      return;
+    }
     statusRef.current = "done";
     setRunning(false);
     // 回话 / 拒绝收尾也要进「最近」：以前只有 finish 和 返回 才 remember，
