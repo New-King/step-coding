@@ -472,7 +472,8 @@ export class Player {
   /**
    * 插话时收手：停下动画，丢掉还没演完的尾巴，但**保留已经打出来的半截**。
    *
-   * 不能用 settle()：它把缓冲区对齐服务端的完整内容，插话的一瞬间整份代码就蹦出来了。
+   * 千万别顺手把缓冲区对齐成服务端的完整内容：插话的一瞬间整份代码就蹦出来了。
+   * 这条被踩过两次，所以那种做法已经从 API 里删掉，只剩「停在半截」这一条路。
    * 也不能只 stop()：pending 还挂着，下一次动作会以为「还在打字」一直排队，
    * 而 tick 已经停了，没人来放行——界面就永远卡在「正在编写」。
    */
@@ -486,30 +487,6 @@ export class Player {
     this.deleting = null;
     this.deleteAt = 0;
     this.mode = null;
-    this.emit();
-  }
-
-  /**
-   * 打断时收手：停下动画，清掉没演完的队列，缓冲区对齐服务端的完整内容。
-   *
-   * 不能只 stop()：tick 停了，但 pending 还挂着，下一次动作会以为「还在打字」一直排队，
-   * 而这时没有任何 tick 能把它放出来——界面就永远卡在「正在编写」。
-   */
-  settle(files: Record<string, string>) {
-    this.stop();
-    this.steps = [];
-    this.cursor = 0;
-    this.pending = "";
-    this.pendingPath = "";
-    this.pendingAt = 0;
-    this.deleting = null;
-    this.deleteAt = 0;
-    this.mode = null;
-    this.buffers = { ...files };
-    this.active =
-      this.active && this.buffers[this.active] !== undefined
-        ? this.active
-        : Object.keys(this.buffers)[0] ?? null;
     this.emit();
   }
 
