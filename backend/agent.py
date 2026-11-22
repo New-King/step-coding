@@ -217,6 +217,42 @@ RECORD_KEEP = 200000
 USER_PIN = 8  # 被裁掉的那段里，最多补回几条用户指令
 
 
+def _pair_tools(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """让每条 tool 消息都紧跟在它那条 assistant(tool_calls) 后面。
+
+    接口的硬要求：tool 必须是某次 tool_calls 的回复，而且每个 tool_call_id 都要有回复。
+    裁剪历史时窗口边界会把这一对切开，发出去就是
+    `400 Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`。
+    这里按组处理：回复没回完的调用整组丢掉，无主的回复也丢掉。
+    """
+    out: list[dict[str, Any]] = []
+    pending: set[str] = set()
+    start = -1  # 上一条 assistant(tool_calls) 在 out 里的下标
+    for m in messages:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            if pending and start >= 0:
+                del out[start:]  # 上一次调用没回完：整组作废
+            pending = {str(c.get("id") or "") for c in m["tool_calls"]}
+            start = len(out)
+            out.append(m)
+        elif role == "tool":
+            cid = str(m.get("tool_call_id") or "")
+            if cid and cid in pending:
+                pending.discard(cid)
+                out.append(m)
+            # 无主（或重复）的回复：丢掉
+        else:
+            if pending and start >= 0:
+                del out[start:]
+                pending = set()
+                start = -1
+            out.append(m)
+    if pending and start >= 0:
+        del out[start:]
+    return out
+
+
 def _recent(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """只把最近 HISTORY_KEEP 条历史发给模型，否则一轮下来每条都重发全量。
 
@@ -227,19 +263,17 @@ def _recent(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     - tool 消息必须跟它那条 assistant(tool_calls) 一起留，拆开接口会 400。
     """
     if len(messages) <= HISTORY_KEEP:
-        return list(messages)
+        return _pair_tools(list(messages))
 
     head = [messages[0]] if messages[0].get("role") == "user" else []
     rest = messages[len(head):]
     keep = max(1, HISTORY_KEEP - len(head))
     tail = rest[-keep:]
     pinned = [m for m in rest[:-keep] if m.get("role") == "user"][-USER_PIN:]
-    cut = pinned + tail
-    while cut and cut[0].get("role") == "tool":
-        cut = cut[1:]
-    while cut and cut[-1].get("tool_calls"):
-        cut = cut[:-1]
-    return head + cut
+    # 补回的用户消息插在窗口前面，窗口第一条可能正好是 tool：
+    # 直接拼就是「user, tool, ...」，接口会 400（tool 必须紧跟 tool_calls）。
+    # 所以拼完统一过一遍配对，把拆散的调用整组丢掉。
+    return _pair_tools(head + pinned + tail)
 
 
 def _record(

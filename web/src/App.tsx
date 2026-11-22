@@ -1386,6 +1386,8 @@ export default function App() {
 
   /** 返回首页：停下手上的活，但把现场留着，回来可以继续 */
   const goHome = () => {
+    // 上一场报的错不该跟着回首页：那行红字属于那一场，不属于新的一屏
+    setError(null);
     // 重播只是回放，现场早就是完整的：别再存一份「没做完」
     if (replayingRef.current) {
       stopReplay();
