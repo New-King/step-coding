@@ -434,6 +434,14 @@ export default function App() {
   const pumpingRef = useRef(false);
   /** 循环正在跑时又来了新指令：等这一轮退出后立刻接着跑，不能把消息吞掉 */
   const pumpQueuedRef = useRef(false);
+  /**
+   * 插话那一刻已经走到第几 seq。
+   *
+   * 插话前发出去的那次请求，回来时带的是旧动作（比如「写 style.css」）。
+   * 用户已经说「等下」了，这些旧动作只落数据、不再演——否则就是
+   * 「嘴上说停住了，手上还在写」。
+   */
+  const interruptAtRef = useRef(-1);
   const pendingSearchRef = useRef("");
   const pendingMessageRef = useRef<string | null>(null);
   /** 收尾动作（finish / say / decline）等当前文件演完再执行 */
@@ -834,6 +842,7 @@ export default function App() {
         const t0 = Date.now();
         // 先把这一轮要发的东西取走并清空，再 await。
         // 否则请求返回时会清掉打断期间刚写进来的新消息，界面上就是「说了没反应」。
+        const reqSeq = seqRef.current;
         const message = pendingMessageRef.current;
         const pendingSearch = pendingSearchRef.current;
         pendingMessageRef.current = null;
@@ -841,7 +850,7 @@ export default function App() {
 
         const res = await requestWithRetry("/api/step", {
           session_id: sessionIdRef.current,
-          seq: seqRef.current,
+          seq: reqSeq,
           message,
           pending_search: pendingSearch || null,
         });
@@ -849,12 +858,16 @@ export default function App() {
         lastMsRef.current = Date.now() - t0;
         seqRef.current = res.seq;
 
+        // 插话前发出的请求：动作照样落数据，但不再演，也不再拿它的收尾当结论
+        const stale = interruptAtRef.current >= 0 && reqSeq <= interruptAtRef.current;
+        if (!stale) interruptAtRef.current = -1;
+
         if (res.changed) {
           applyChanges(res.changed as Record<string, string | null>);
           serverFilesRef.current = filesRef.current;
         }
 
-        const stop = handleEvent(res.event as Event);
+        const stop = handleEvent(res.event as Event, stale);
         note("pump", `event=${res.event?.action} stop=${stop}`);
         // 每走一步就落一次现场：刷新 / 退出时丢掉的最多只是正在演的这一小段
         saveSession();
@@ -905,7 +918,6 @@ export default function App() {
    *
    * 模型可能在一个大文件刚开始打字时就返回 say。立刻把「写好了」铺出来，
    * 屏幕上就是文件还在逐行写、下面已经交差；所以文字排在动画之后。
-   * 动画本身有 6 秒上限（player 里按文件长度自动加速），不会等上几分钟。
    */
   const afterAnimation = (fn: () => void): true => {
     if (playerRef.current!.busy) afterPlayerRef.current = fn;
@@ -913,8 +925,13 @@ export default function App() {
     return true;
   };
 
-  /** 处理一个动作。返回 true 表示这一轮到此为止。 */
-  const handleEvent = (ev: Event): boolean => {
+  /**
+   * 处理一个动作。返回 true 表示这一轮到此为止。
+   *
+   * `stale` = 这是插话之前发出的那次请求的结果：数据照收，动作不演、收尾不算。
+   * 不然会出现「嘴上说停住了，手上还在写 style.css」。
+   */
+  const handleEvent = (ev: Event, stale = false): boolean => {
     note(ev.action, "text" in ev && ev.text ? ev.text : "path" in ev ? ev.path : "");
 
     if (ev.action === "search") {
@@ -960,6 +977,11 @@ export default function App() {
       // （尤其是删除——等演到再记，一暂停就永远看不到它）。
       // 状态行另算，它跟播放器（snap.mode / snap.active），不跟这里。
       pushStep(ev);
+      if (stale) {
+        // 插话前发出的请求：文件确实改了，但用户已经说「等下」，别再演一遍
+        note("play.skip", `${ev.path} 是插话前的那一步，不再演`);
+        return false;
+      }
       // 还在打上一个文件的话，这一段先排着；循环跟着停，演完再接着往下问
       return playEvent(ev);
     }
@@ -972,6 +994,12 @@ export default function App() {
 
     if (ev.action === "error") {
       pushStep(ev);
+      return false;
+    }
+
+    if (stale && (ev.action === "say" || ev.action === "decline" || ev.action === "finish")) {
+      // 插话前那一轮的收尾：用户已经补了新指令，这句话不算数
+      note("play.skip", `旧轮次的 ${ev.action} 丢掉`);
       return false;
     }
 
@@ -1253,6 +1281,8 @@ export default function App() {
     // 以前是 await 它（最长 20 秒）再上屏，看起来就是「说了很久才出来」。
     if (statusRef.current === "running" || pumpingRef.current) {
       note("send.interrupt", "打断正在跑的这一轮");
+      // 这个 seq 之前发出的请求都算旧动作：回来只落数据，不再演
+      interruptAtRef.current = seqRef.current;
     }
     // 旧一轮挂着的收尾（say / finish）作废：新指令优先
     afterPlayerRef.current = null;
