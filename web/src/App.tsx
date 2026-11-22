@@ -977,6 +977,8 @@ export default function App() {
       setPending(ev.questions);
       setAskIndex(0);
       setAskAnswers([]);
+      // 新问题进来就是重新开始答：上一轮的锁不能带过来
+      answeringRef.current = false;
       statusRef.current = "waiting";
       setRunning(false);
       saveSession();
@@ -1266,6 +1268,9 @@ export default function App() {
     setPending(null);
     setAskAnswers([]);
     setAskIndex(0);
+    // 这一答已经交出去了，锁必须放开：否则下一次追问的答案会被这层拦下，
+    // 输入框清空、卡片不动，看起来就是「说了没反应」
+    answeringRef.current = false;
     toastReset();
     setRunning(true);
     push({ action: "user", text: payload } as Event);
@@ -1279,9 +1284,15 @@ export default function App() {
     setQuestion("");
     setComposerOpen(false);
 
+    // 底部输入框不是「回答问题」的入口。卡片还开着时从这儿说话 = 这组问题先不答，
+    // 直接把卡片撤掉、按新指令走。要逐题回答只能在卡片里点选项或填写：
+    // 多题的时候一句话只顶第一题，剩下的还得挨个问，反而不像人话。
     if (pending) {
-      await answerAsk(value);
-      return;
+      setPending(null);
+      setAskAnswers([]);
+      setAskIndex(0);
+      setAnswer("");
+      answeringRef.current = false;
     }
 
     if (!started) {
@@ -1536,6 +1547,7 @@ export default function App() {
     setAskIndex(0);
     setAskAnswers([]);
     setAnswer("");
+    answeringRef.current = false;
     setRunning(false);
     statusRef.current = resumable ? "paused" : st === "waiting" ? "waiting" : "done";
     runStartRef.current = 0;
