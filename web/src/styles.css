@@ -1,6 +1,8 @@
 /* Step Coding —— 暖白底、墨黑字、无彩色强调；代码区是浅灰的纸 */
 
 :root {
+  /* 原生控件（输入框光标、自动填充、滚动条）跟着主题走，深色下别给黑字 */
+  color-scheme: light;
   --page: #f5f5f7;
   --card: #ffffff;
   --ink: #1d1d1f;
@@ -57,6 +59,7 @@
  * 文字也不用纯白（#E6E6E9），按钮是低饱和灰；深色下对比太硬反而刺眼。
  */
 html[data-theme="dark"] {
+  color-scheme: dark;
   --page: #242426;
   --card: #2c2c2e;
   --ink: #e6e6e9;
@@ -670,6 +673,28 @@ html[data-theme="dark"] .status.done {
 
 html[data-theme="dark"] .ask-answered {
   background: #1a1a1d;
+}
+
+/* 深色下 ink 是亮色，拿它当卡片边框会闪一道白边 */
+html[data-theme="dark"] .ask-card {
+  border-color: var(--line-strong);
+}
+
+html[data-theme="dark"] .ask-progress {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .ask-dots i {
+  background: var(--line-strong);
+}
+
+/* 选项在深色下往「比卡片亮一档」走，看着才像能点的按钮 */
+html[data-theme="dark"] .ask-opt {
+  background: var(--hover-soft);
+}
+
+html[data-theme="dark"] .ask-opt:hover {
+  background: var(--hover);
 }
 
 ::-webkit-scrollbar {
@@ -1980,7 +2005,8 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   height: 15px;
   flex: 0 0 15px;
   border-radius: 50%;
-  background: var(--ink);
+  /* 同 ask-send：ink 在深色下是亮的，序号会糊在底上 */
+  background: var(--accent);
   color: var(--on-accent);
   font-size: 9px;
   display: grid;
@@ -2119,8 +2145,15 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--surface-soft);
+  /* input 不继承 color，深色下会落回 UA 的黑色：必须显式给 */
+  color: var(--ink);
+  caret-color: var(--brand);
   font-size: 12px;
   outline: none;
+}
+
+.ask-input-row input::placeholder {
+  color: var(--faint);
 }
 
 .ask-input-row input:focus {
@@ -2133,11 +2166,17 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   height: 28px;
   flex: 0 0 28px;
   border-radius: 8px;
-  background: var(--ink);
+  /* 用 accent 不用 ink：深色下 ink 是亮的，箭头会和底色糊在一起 */
+  background: var(--accent);
   color: var(--on-accent);
   display: grid;
   place-items: center;
   font-size: 13px;
+  transition: background 0.16s var(--ease);
+}
+
+.ask-send:hover {
+  background: var(--accent-hover);
 }
 
 /* ---- 搜索 ---- */
@@ -2311,7 +2350,7 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   width: 16px;
   height: 16px;
   border-radius: 5px;
-  background: var(--ink);
+  background: var(--accent);
   color: var(--on-accent);
   font-size: 9px;
   font-weight: 600;
