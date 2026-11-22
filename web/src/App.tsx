@@ -168,8 +168,8 @@ const EXAMPLES: { label: string; ask: string }[] = [
     ask: "用 TypeScript 写个最小的 LangGraph 例子，两个节点串起来，跑一遍看值怎么流过去",
   },
   {
-    label: "快速排序怎么划分的",
-    ask: "写个快速排序，把每次划分后的数组状态打出来，能一步步看到它怎么排好序",
+    label: "什么是快速排序",
+    ask: "用 python 写一个快速排序算法",
   },
   {
     label: "爬虫怎么抓页面",
