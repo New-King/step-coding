@@ -470,6 +470,26 @@ export class Player {
   }
 
   /**
+   * 插话时收手：停下动画，丢掉还没演完的尾巴，但**保留已经打出来的半截**。
+   *
+   * 不能用 settle()：它把缓冲区对齐服务端的完整内容，插话的一瞬间整份代码就蹦出来了。
+   * 也不能只 stop()：pending 还挂着，下一次动作会以为「还在打字」一直排队，
+   * 而 tick 已经停了，没人来放行——界面就永远卡在「正在编写」。
+   */
+  holdTyping() {
+    this.stop();
+    this.steps = [];
+    this.cursor = 0;
+    this.pending = "";
+    this.pendingPath = "";
+    this.pendingAt = 0;
+    this.deleting = null;
+    this.deleteAt = 0;
+    this.mode = null;
+    this.emit();
+  }
+
+  /**
    * 打断时收手：停下动画，清掉没演完的队列，缓冲区对齐服务端的完整内容。
    *
    * 不能只 stop()：tick 停了，但 pending 还挂着，下一次动作会以为「还在打字」一直排队，

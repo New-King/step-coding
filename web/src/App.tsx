@@ -1256,9 +1256,9 @@ export default function App() {
     }
     // 旧一轮挂着的收尾（say / finish）作废：新指令优先
     afterPlayerRef.current = null;
-    // 打断收手：停下动画、丢掉没演完的队列，缓冲区对齐服务端内容。
+    // 插话收手：停在演到的地方，不把剩下的字补出来（补了就是「整份代码一下蹦出来」）。
     // 只 stop() 会留下「还在打字」的假象，下一次动作永远排不上（卡在正在编写）
-    playerRef.current!.settle(filesRef.current);
+    playerRef.current!.holdTyping();
 
     playerRef.current!.paused = false;
     setPaused(false);
