@@ -52,18 +52,29 @@ def normalize(raw: dict[str, Any]) -> dict[str, Any]:
         questions: list[dict[str, Any]] = []
         raw_questions = raw.get("questions")
 
+        def one(item: Any) -> dict[str, Any] | None:
+            # 模型有时直接给字符串数组（["要做的页面是？"]），不能当 dict 用
+            if isinstance(item, str):
+                text = item.strip()
+                return {"question": text[:120], "options": []} if text else None
+            if not isinstance(item, dict):
+                return None
+            text = str(item.get("question") or "").strip()
+            if not text:
+                return None
+            opts = []
+            for o in (item.get("options") or [])[:4]:
+                label = o.get("label") if isinstance(o, dict) else o
+                label = str(label or "").strip()
+                if label:
+                    opts.append(label[:40])
+            return {"question": text[:120], "options": opts}
+
         if isinstance(raw_questions, list) and raw_questions:
             for item in raw_questions[:4]:
-                text = str(item.get("question") or "").strip()
-                if not text:
-                    continue
-                opts = []
-                for o in (item.get("options") or [])[:4]:
-                    label = o.get("label") if isinstance(o, dict) else o
-                    label = str(label or "").strip()
-                    if label:
-                        opts.append(label[:40])
-                questions.append({"question": text[:120], "options": opts})
+                question = one(item)
+                if question:
+                    questions.append(question)
         else:
             # 兼容单个问题的老格式
             text = str(raw.get("question") or "").strip()

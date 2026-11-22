@@ -187,7 +187,9 @@ def _call(messages: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any
     if "content" in args and "code" not in args:
         args["code"] = args.pop("content")
 
-    action = normalize({"action": TOOL_NAME_TO_ACTION.get(name, ""), **args})
+    # 动作类型只由工具名决定：参数里若也带一个 `action`（模型偶尔会塞），
+    # 展开顺序必须让外层覆盖它，否则一次 write_file 能被参数改判成 say
+    action = normalize({**args, "action": TOOL_NAME_TO_ACTION.get(name, "")})
     assistant = {
         "role": "assistant",
         "content": msg.get("content") or "",

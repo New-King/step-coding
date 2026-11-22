@@ -191,7 +191,6 @@ function clientId() {
     return "";
   }
 }
-const MAX_ROUNDS = 20;
 /** 「最近」最多留几条：满了就不让新建，先删一条或清空 */
 const MAX_HISTORY = 10;
 
@@ -831,14 +830,8 @@ export default function App() {
 
     try {
       while (statusRef.current === "running") {
-        if (seqRef.current >= MAX_ROUNDS) {
-          pushStep({ action: "finish", text: "步数到上限，先停在这里" });
-          statusRef.current = "done";
-          setRunning(false);
-          saveSession();
-          break;
-        }
-
+        // 步数上限只由后端按「每轮」判，前端不重复判：
+        // seqRef 是会话累计步数，拿它比 20 会在聊到第 20 步后把整个会话锁死。
         const t0 = Date.now();
         // 先把这一轮要发的东西取走并清空，再 await。
         // 否则请求返回时会清掉打断期间刚写进来的新消息，界面上就是「说了没反应」。

@@ -39,12 +39,59 @@ function idsUsedInJs(js: string): Set<string> {
   return set;
 }
 
+/**
+ * 括号是否成对。
+ *
+ * 必须跳过字符串和注释：`const s = "}"` 里的 `}` 不是结构括号，
+ * 逐字符数会把它当右括号，报出一个根本不存在的错误。
+ */
 function balanced(code: string, open: string, close: string): boolean {
   let depth = 0;
-  for (const ch of code) {
+  let quote = "";
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let i = 0; i < code.length; i += 1) {
+    const ch = code[i];
+    const next = code[i + 1];
+
+    if (lineComment) {
+      if (ch === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === "*" && next === "/") {
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+
+    if (ch === "/" && next === "/") {
+      lineComment = true;
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      blockComment = true;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+
     if (ch === open) depth += 1;
-    else if (ch === close) depth -= 1;
-    if (depth < 0) return false;
+    else if (ch === close) {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
   }
   return depth === 0;
 }

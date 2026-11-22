@@ -66,7 +66,10 @@ class Session:
         seq: int = 0,
     ) -> None:
         self.id = sid
-        self.messages: list[dict[str, Any]] = list(messages or [])
+        # 恢复时客户端可以传任意长度：先按会话上限裁一遍，
+        # 否则一次恢复就能把几十万条塞进内存和落盘文件。
+        # 顺带保证开头不是孤立的 tool、末尾不是没有结果的 tool_calls。
+        self.messages: list[dict[str, Any]] = _trim(list(messages or []))
         self.files: dict[str, str] = dict(files or {})
         self.seq = seq
         # 这一轮（这条用户消息）是从第几步开始的：步数上限按轮算，不按会话累计算

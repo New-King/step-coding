@@ -71,6 +71,14 @@ def test_unknown_action_is_rejected():
     with pytest.raises(AgentError):
         normalize({})
 
+def test_ask_accepts_plain_string_questions():
+    """模型常直接把 questions 写成字符串数组，不能当 dict 用（会 AttributeError → 500）。"""
+    out = normalize({"action": "ask", "questions": ["要不要后端？", {"question": "几个页面", "options": ["一个", "多个"]}]})
+    assert [q["question"] for q in out["questions"]] == ["要不要后端？", "几个页面"]
+    assert out["questions"][0]["options"] == []
+    assert out["questions"][1]["options"] == ["一个", "多个"]
+
+
 def test_say_keeps_code_block_over_200_chars():
     """回复里直接贴代码是正常用法：200 字的老上限会把它从中间截断（实测断在 `quickSort(a, p + 1, hi`）。"""
     code = "```ts\n" + "\n".join(f"const v{i} = {i};" for i in range(30)) + "\n```"
