@@ -1,6 +1,6 @@
 import pytest
 
-from backend.actions import SAY_CHARS, normalize
+from backend.actions import normalize
 from backend.agent_error import AgentError
 
 
@@ -94,10 +94,9 @@ def test_finish_keeps_full_summary():
     assert out["text"] == text
 
 
-def test_overlong_text_gets_marked_not_silently_cut():
-    """真超过兜底上限时留省略号，别让人读到半句话还不知道断了。"""
-    text = "字" * (SAY_CHARS + 50)
+def test_no_text_is_ever_clipped():
+    """任何长度都原样保留：长度由模型按提示词自己判断，代码不做限制。"""
+    text = "字" * 3000
     for action in ("say", "finish", "decline"):
         out = normalize({"action": action, "text": text})
-        assert out["text"].endswith("…")
-        assert len(out["text"]) <= SAY_CHARS + 1
+        assert out["text"] == text

@@ -167,38 +167,21 @@ def test_max_rounds_stops(monkeypatch):
     out = agent.step([], {}, agent.MAX_ROUNDS)
     assert out["event"]["action"] == "finish"
 
-def test_long_say_gets_pushed_into_a_file(monkeypatch):
-    """对话只留结论：讲了 240 字以上，退回让它写成文件，写成了就直接落盘。"""
-    long_text = "原理讲一大段。" * 40  # 280 字
-    calls = scripted([
-        {"action": "say", "text": long_text},
-        {"action": "write", "path": "notes.md", "code": "# 原理\n\n解释正文"},
-    ])
-    monkeypatch.setattr(agent, "_call", calls)
+def test_long_reply_passes_through_untouched(monkeypatch):
+    """长回话不再被退回改写、也不会被切：该说不说、写不写文件由模型按提示词判断。"""
+    long_text = "原理讲一大段，讲得很细。" * 40
+    monkeypatch.setattr(
+        agent, "_call", lambda messages: reply({"action": "say", "text": long_text})
+    )
 
     out = agent.step([], {}, 0)
 
-    assert out["event"]["action"] == "write"
-    assert out["files"]["notes.md"] == "# 原理\n\n解释正文"
-    assert calls.calls["n"] == 2
-
-
-def test_long_say_falls_back_to_the_short_rewrite(monkeypatch):
-    """退回后仍然只说话：用它自己收短的那句，别把结论丢掉。"""
-    calls = scripted([
-        {"action": "say", "text": "啰嗦" * 150},
-        {"action": "say", "text": "三条都跑通了，看 app.js。"},
-    ])
-    monkeypatch.setattr(agent, "_call", calls)
-
-    out = agent.step([], {}, 0)
-
-    assert out["event"] == {"action": "say", "text": "三条都跑通了，看 app.js。"}
+    assert out["event"] == {"action": "say", "text": long_text}
     assert out["stop"] is True
 
 
 def test_short_say_passes_through(monkeypatch):
-    """一句话结论不该被拦。"""
+    """一句话结论同样原样下发。"""
     monkeypatch.setattr(
         agent, "_call", lambda messages: reply({"action": "say", "text": "改好了，看 app.js。"})
     )
@@ -206,69 +189,3 @@ def test_short_say_passes_through(monkeypatch):
     out = agent.step([], {"app.js": "let a = 1;\n"}, 0)
 
     assert out["event"]["text"] == "改好了，看 app.js。"
-
-
-def _valid_tool_pairs(messages):
-    """接口的硬要求：tool 必须紧跟 assistant(tool_calls)，且每个 id 都有回复。"""
-    pending = set()
-    for m in messages:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            assert not pending, "上一条调用还没回完就来了新调用"
-            pending = {c.get("id") for c in m["tool_calls"]}
-        elif m.get("role") == "tool":
-            assert m.get("tool_call_id") in pending, "tool 没有对应的 tool_calls"
-            pending.discard(m.get("tool_call_id"))
-        else:
-            assert not pending, "调用没回完就插了别的消息"
-            pending = set()
-    assert not pending, "最后一条调用没有 tool 回复"
-
-
-def test_recent_never_splits_tool_pairs():
-    """裁剪窗口正好切在 tool 上时，不能拼出「user, tool, …」这种 400 组合。"""
-    messages = [{"role": "user", "content": "开始"}]
-    for i in range(30):
-        messages.append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"id": f"c{i}", "function": {"name": "look", "arguments": "{}"}}],
-        })
-        messages.append({"role": "tool", "tool_call_id": f"c{i}", "content": "{}"})
-        if i % 5 == 4:
-            messages.append({"role": "user", "content": f"第{i}轮"})
-
-    out = agent._recent(messages)
-
-    assert len(out) < len(messages)
-    _valid_tool_pairs(out)
-
-
-def test_recent_drops_unanswered_tool_call():
-    """最后一条 assistant 的调用没有 tool 回复：整组丢掉，别让接口 400。"""
-    messages = [{"role": "user", "content": "开始"}] + [
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"id": f"c{i}", "function": {"name": "look", "arguments": "{}"}}],
-        }
-        for i in range(3)
-    ]  # 三条调用全都没回
-
-    out = agent._recent(messages)
-
-    assert out == [{"role": "user", "content": "开始"}]
-
-
-def test_recent_keeps_complete_pairs():
-    """成对的调用回复要原样留着。"""
-    messages = [
-        {"role": "user", "content": "开始"},
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "c0", "function": {"name": "look", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "c0", "content": "{}"},
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "look", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "c1", "content": "{}"},
-    ]
-
-    out = agent._recent(messages)
-
-    assert [m["role"] for m in out] == ["user", "assistant", "tool", "assistant", "tool"]
