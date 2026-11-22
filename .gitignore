@@ -14,3 +14,6 @@ web/playwright-report/
 
 # 本地笔记，不进仓库
 docs/notes/
+
+# playwright-cli 的调试快照（page-*.yml / console-*.log），不进仓库
+.playwright-cli/
