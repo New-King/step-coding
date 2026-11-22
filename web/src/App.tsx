@@ -786,6 +786,7 @@ export default function App() {
     resetRunClock();
     statusRef.current = "running";
     setRunning(true);
+    stickLog();
     push({ action: "user", text: value } as Event);
     saveSession();
 
@@ -1296,6 +1297,7 @@ export default function App() {
     pumpQueuedRef.current = true;
     toastReset();
     setRunning(true);
+    stickLog();
     push({ action: "user", text: value } as Event);
     saveSession();
     await pump();
@@ -1857,6 +1859,18 @@ export default function App() {
   /** 离底部够近才算"跟着走"，用户往上翻过就停手。 */
   const nearBottom = (el: HTMLElement) =>
     el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+
+  /**
+   * 自己发消息时强制回到最新一条。
+   *
+   * 平时不抢滚动条（用户往上翻就是往上翻），但「我刚说的话」必须看得见：
+   * 上一条还在下方、自己的问题却没露出来，是最容易让人以为没发出去的。
+   */
+  const stickLog = () => {
+    logStickRef.current = true;
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
 
   /** 代码区的渐隐按方向给：哪一端还有内容，哪一端才化开 */
   const syncCodeFade = () => {
