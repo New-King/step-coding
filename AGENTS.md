@@ -31,7 +31,7 @@
 
 - 代码：`/opt/step-coding`（rsync 覆盖，服务器上没有 `.git`）
 - 进程：systemd `step-coding`，`uvicorn backend.main:app --host 127.0.0.1 --port 8790`，单 worker
-- 入口：1Panel 站点 `step.new-king.com` 整站反代到 8790（旧域 `stepcoding.new-king.com` 保留 301），OpenResty 跑在容器里（改配置要 `docker exec <容器> openresty -s reload`）
+- 入口：1Panel 站点 `step.new-king.com` 整站反代到 8790，OpenResty 跑在容器里（改配置要 `docker exec <容器> openresty -s reload`）
 - 自动部署：`.github/workflows/deploy.yml`，push main → 构建 → rsync → 重启
 
 ## 别动的东西
