@@ -50,10 +50,12 @@ TOOLS: list[dict[str, Any]] = [
               },
               "required": ["question"],
           }}}, ["questions"]),
-    _spec("say", "结束这一轮时说给用户看的话：寒暄、解释，或把要的代码直接贴出来"
-                 "（2000 字以内，超了拆两次说）。不能用来宣称文件已写好。",
-          {"text": {"type": "string"}}, ["text"]),
+    _spec("say", "结束这一轮说给用户看的话：结论、结果、下一步，两三句以内。"
+                 "不要贴代码、不要成段解释——要讲的内容写进文件（说明写 .md），"
+                 "这里只说结论并指路。超过 240 字会被退回重写。不能用来宣称文件已写好。",
+          {"text": {"type": "string", "description": "240 字以内"}}, ["text"]),
     _spec("write_file", "新建文件，或整份重写一个已有文件；内容必须完整、能直接运行。"
+                       "讲原理、写说明、列对比就写成 .md 文件。"
                        "只改一处用 edit_file，别整份重写。",
           {"path": {"type": "string"}, "lang": {"type": "string"},
            "label": {"type": "string", "description": "这一步在做什么，12 字以内"},
@@ -67,8 +69,8 @@ TOOLS: list[dict[str, Any]] = [
           ["path", "find", "replace"]),
     _spec("delete_file", "删除项目里的一个文件。删之前必须先 look 过它。",
           {"path": {"type": "string"}, "label": {"type": "string"}}, ["path"]),
-    _spec("finish", "这件事做完了，附一句总结。",
-          {"text": {"type": "string"}}, ["text"]),
+    _spec("finish", "这件事做完了，附一两句总结，不贴代码、不长篇解释。",
+          {"text": {"type": "string", "description": "240 字以内"}}, ["text"]),
     _spec("decline", "超出范围时礼貌说明，并用代码给出可达成的替代。",
           {"text": {"type": "string"},
            "suggestions": {"type": "array", "items": {"type": "string"}}}, ["text"]),

@@ -10,9 +10,12 @@ from typing import Any
 
 from .agent_error import AgentError
 
-# 回话正文的上限：一句寒暄几十字就够，但模型会直接把算法/示例代码贴在回复里，
-# 200 字会把它从中间截断（实测断在 `quickSort(a, p + 1, hi`），所以放宽到能装下一段代码。
-SAY_CHARS = 2000
+# 回话正文的上限。这个产品卖的是「文字落成文件、对话只留结论」，
+# 所以超长不往对话里塞：调用方拿到 SAY_TOO_LONG 以上的 say 会退回让模型写成文件。
+# SAY_CHARS 只是兜底截断，防止模型硬塞几千字把界面顶爆。
+SAY_CHARS = 600
+# 总结句的软上限：超过它就不算「一句话」，会被要求改写成文件
+SAY_TOO_LONG = 240
 
 
 def normalize(raw: dict[str, Any]) -> dict[str, Any]:

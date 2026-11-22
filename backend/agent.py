@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import search
-from .actions import SAY_CHARS, normalize
+from .actions import SAY_CHARS, SAY_TOO_LONG, normalize
 from .agent_error import AgentError, TruncatedError
 from .context import content as read_content
 from .context import manifest
@@ -340,6 +340,7 @@ def step(
         # 只查文件存不存在拦不住它——文件在，内容没变。
         stale = claims_changed(text, touched_paths(messages))
         targets = missing or stale
+        too_long = len(text) > SAY_TOO_LONG
         demand = ""
         if missing:
             demand = (
@@ -350,6 +351,13 @@ def step(
             demand = (
                 f"你说 {', '.join(stale)} 已经改过了，但这一轮没有对它执行任何写操作。"
                 "不要只说，直接调用 edit_file 或 write_file 把改动落下去。"
+            )
+        elif too_long:
+            # 对话只留结论：成段的解释、清单、示例代码都得是文件
+            demand = (
+                f"这段话有 {len(text)} 字，太长。把里面的解释、步骤、对比、示例代码"
+                "用 write_file 写成文件（说明写 .md，代码写代码文件），"
+                "对话里只留两三句结论，并告诉用户看哪个文件。"
             )
 
         if demand:
@@ -366,10 +374,23 @@ def step(
                         "messages": _record(retry_messages, retry_assistant, retry_call, done),
                         "files": state,
                     }
+            # 退回来的这句已经收短了：用它，别把结论丢了
+            if not targets and retry_action["action"] in {"say", "finish"}:
+                short = str(retry_action.get("text") or "").strip()
+                if short and len(short) <= SAY_TOO_LONG:
+                    return {
+                        "event": {**retry_action, "text": short},
+                        "messages": _record(retry_messages, retry_assistant, retry_call),
+                        "stop": True,
+                    }
             return {
                 "event": {
                     "action": "say",
-                    "text": f"我还没真的动过 {', '.join(targets)}，刚才那句不算。再说一次我就动手。",
+                    "text": (
+                        f"我还没真的动过 {', '.join(targets)}，刚才那句不算。再说一次我就动手。"
+                        if targets
+                        else "这段说得太长了，先写成文件，再说结论。"
+                    ),
                 },
                 "messages": retry_messages,
                 "stop": True,

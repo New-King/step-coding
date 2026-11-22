@@ -1,6 +1,6 @@
 from backend import agent, search
 from backend.agent_error import TruncatedError
-from tests.helpers import reply
+from tests.helpers import reply, scripted
 
 
 def test_look_missing_file_returns_error_not_whole_project(monkeypatch):
@@ -166,3 +166,43 @@ def test_max_rounds_stops(monkeypatch):
     )
     out = agent.step([], {}, agent.MAX_ROUNDS)
     assert out["event"]["action"] == "finish"
+
+def test_long_say_gets_pushed_into_a_file(monkeypatch):
+    """对话只留结论：讲了 240 字以上，退回让它写成文件，写成了就直接落盘。"""
+    long_text = "原理讲一大段。" * 40  # 280 字
+    calls = scripted([
+        {"action": "say", "text": long_text},
+        {"action": "write", "path": "notes.md", "code": "# 原理\n\n解释正文"},
+    ])
+    monkeypatch.setattr(agent, "_call", calls)
+
+    out = agent.step([], {}, 0)
+
+    assert out["event"]["action"] == "write"
+    assert out["files"]["notes.md"] == "# 原理\n\n解释正文"
+    assert calls.calls["n"] == 2
+
+
+def test_long_say_falls_back_to_the_short_rewrite(monkeypatch):
+    """退回后仍然只说话：用它自己收短的那句，别把结论丢掉。"""
+    calls = scripted([
+        {"action": "say", "text": "啰嗦" * 150},
+        {"action": "say", "text": "三条都跑通了，看 app.js。"},
+    ])
+    monkeypatch.setattr(agent, "_call", calls)
+
+    out = agent.step([], {}, 0)
+
+    assert out["event"] == {"action": "say", "text": "三条都跑通了，看 app.js。"}
+    assert out["stop"] is True
+
+
+def test_short_say_passes_through(monkeypatch):
+    """一句话结论不该被拦。"""
+    monkeypatch.setattr(
+        agent, "_call", lambda messages: reply({"action": "say", "text": "改好了，看 app.js。"})
+    )
+
+    out = agent.step([], {"app.js": "let a = 1;\n"}, 0)
+
+    assert out["event"]["text"] == "改好了，看 app.js。"

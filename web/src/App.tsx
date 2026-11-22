@@ -155,23 +155,38 @@ const EMPTY: Snapshot = {
  * `label` 是按钮上的字，`ask` 是点下去真正发出去的那句。
  */
 const EXAMPLES: { label: string; ask: string }[] = [
-  { label: "登录注册是怎么回事", ask: "登录注册到底是怎么回事？从输入到登录成功，中间都发生了什么" },
   {
-    label: "function call 怎么调起来的",
-    ask: "function call 到底是怎么调起来的？模型怎么就能调用到真实函数，写个最小例子看看",
+    label: "登录注册怎么做的",
+    ask: "做个最小的登录注册页面：表单校验、登录成功后的状态切换都跑起来，关键步骤写注释",
   },
   {
-    label: "LangGraph 的节点怎么串",
-    ask: "LangGraph 的节点是怎么串起来跑的？用 TypeScript 写个最小例子",
+    label: "function call 怎么落地",
+    ask: "写个最小例子演示 function call：模型给的调用是怎么落到真实函数上的，能跑起来",
   },
-  { label: "快速排序为什么快", ask: "快速排序为什么快？想看它一步步把数组划分开的过程" },
-  { label: "爬虫怎么抓到数据", ask: "爬虫是怎么抓到网页数据的？从发请求到存成表格，中间做了什么" },
   {
-    label: "批量改文件名靠什么",
-    ask: "批量改文件名这种活儿靠什么做的？脚本怎么遍历目录、再一个个改名",
+    label: "LangGraph 节点怎么串",
+    ask: "用 TypeScript 写个最小的 LangGraph 例子，两个节点串起来，跑一遍看值怎么流过去",
   },
-  { label: "单元测试在测什么", ask: "单元测试到底在测什么？一个函数是怎么被测试覆盖住的" },
-  { label: "Docker 到底做了什么", ask: "Docker 到底做了什么？Dockerfile 每一行在干什么" },
+  {
+    label: "快速排序怎么划分的",
+    ask: "写个快速排序，把每次划分后的数组状态打出来，能一步步看到它怎么排好序",
+  },
+  {
+    label: "爬虫怎么抓页面",
+    ask: "写个小爬虫，抓一个页面解析成表格存下来，请求和解析分成两个文件",
+  },
+  {
+    label: "批量改名脚本",
+    ask: "写个批量改文件名的脚本：遍历目录、先预览要改成什么、确认后再真正改名",
+  },
+  {
+    label: "单元测试长什么样",
+    ask: "写个小函数配上单元测试，正常情况和边界情况都覆盖到，跑一次看结果",
+  },
+  {
+    label: "Dockerfile 写了什么",
+    ask: "写个最小 Dockerfile 加启动脚本，每一行都加注释说明它在干什么",
+  },
 ];
 
 const HISTORY_KEY = "stepcoding.history.v2";
