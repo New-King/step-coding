@@ -435,13 +435,13 @@ export default function App() {
   /** 循环正在跑时又来了新指令：等这一轮退出后立刻接着跑，不能把消息吞掉 */
   const pumpQueuedRef = useRef(false);
   /**
-   * 插话那一刻已经走到第几 seq。
+   * 插话代数：每插一次话 +1。
    *
-   * 插话前发出去的那次请求，回来时带的是旧动作（比如「写 style.css」）。
-   * 用户已经说「等下」了，这些旧动作只落数据、不再演——否则就是
-   * 「嘴上说停住了，手上还在写」。
+   * 请求发出时记下当前代数，回来时代数变了就说明「这是插话前发出的旧请求」——
+   * 它带回来的写动作只落数据、不再演，收尾也不作数。
+   * 用代数而不是比 seq：插话可能发生在请求发出前后，比 seq 会误判。
    */
-  const interruptAtRef = useRef(-1);
+  const interruptGenRef = useRef(0);
   const pendingSearchRef = useRef("");
   const pendingMessageRef = useRef<string | null>(null);
   /** 收尾动作（finish / say / decline）等当前文件演完再执行 */
@@ -843,10 +843,14 @@ export default function App() {
         // 先把这一轮要发的东西取走并清空，再 await。
         // 否则请求返回时会清掉打断期间刚写进来的新消息，界面上就是「说了没反应」。
         const reqSeq = seqRef.current;
+        const reqGen = interruptGenRef.current;
         const message = pendingMessageRef.current;
         const pendingSearch = pendingSearchRef.current;
         pendingMessageRef.current = null;
         pendingSearchRef.current = "";
+        // 这次请求已经把排队的那句带上了：循环退出时不用再补一轮，
+        // 否则同一个问题会被答两遍，还多花一次模型调用
+        if (message) pumpQueuedRef.current = false;
 
         const res = await requestWithRetry("/api/step", {
           session_id: sessionIdRef.current,
@@ -858,9 +862,8 @@ export default function App() {
         lastMsRef.current = Date.now() - t0;
         seqRef.current = res.seq;
 
-        // 插话前发出的请求：动作照样落数据，但不再演，也不再拿它的收尾当结论
-        const stale = interruptAtRef.current >= 0 && reqSeq <= interruptAtRef.current;
-        if (!stale) interruptAtRef.current = -1;
+        // 发出之后被插过话：这是旧请求。动作照样落数据，但不再演，收尾也不作数
+        const stale = reqGen !== interruptGenRef.current;
 
         if (res.changed) {
           applyChanges(res.changed as Record<string, string | null>);
@@ -1281,8 +1284,8 @@ export default function App() {
     // 以前是 await 它（最长 20 秒）再上屏，看起来就是「说了很久才出来」。
     if (statusRef.current === "running" || pumpingRef.current) {
       note("send.interrupt", "打断正在跑的这一轮");
-      // 这个 seq 之前发出的请求都算旧动作：回来只落数据，不再演
-      interruptAtRef.current = seqRef.current;
+      // 代数 +1：此刻之前发出的请求回来时算旧动作，只落数据不再演
+      interruptGenRef.current += 1;
     }
     // 旧一轮挂着的收尾（say / finish）作废：新指令优先
     afterPlayerRef.current = null;

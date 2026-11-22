@@ -9,6 +9,8 @@ __pycache__/
 .chrome*/
 logs/
 var/
+web/test-results/
+web/playwright-report/
 
 # 本地笔记，不进仓库
 docs/notes/
