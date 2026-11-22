@@ -18,6 +18,17 @@ SAY_CHARS = 600
 SAY_TOO_LONG = 240
 
 
+def _clip(text: str, limit: int) -> str:
+    """超长兜底：宁可留个省略号，也别让它读起来像半句话。
+
+    曾经 finish 被硬切到 120 字，模型说的「…只对小数做收敛。现在两份文件
+    逻辑和断言一致。」在界面上变成「…只对小数做收敛。现」——看着像故障。
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
 def normalize(raw: dict[str, Any]) -> dict[str, Any]:
     kind = str(raw.get("action") or "").strip().lower()
     if kind not in {
@@ -34,13 +45,13 @@ def normalize(raw: dict[str, Any]) -> dict[str, Any]:
         text = str(raw.get("text") or "").strip()
         if not text:
             raise AgentError("say 没有内容")
-        return {"action": "say", "text": text[:SAY_CHARS]}
+        return {"action": "say", "text": _clip(text, SAY_CHARS)}
     if kind == "decline":
         text = str(raw.get("text") or "").strip()
         if not text:
             raise AgentError("decline 没有给出说明")
         ideas = [str(x).strip()[:40] for x in (raw.get("suggestions") or []) if str(x).strip()]
-        return {"action": "decline", "text": text[:200], "suggestions": ideas[:3]}
+        return {"action": "decline", "text": _clip(text, SAY_CHARS), "suggestions": ideas[:3]}
     if kind == "search":
         text = str(raw.get("query") or "").strip()
         if not text:
@@ -126,6 +137,7 @@ def normalize(raw: dict[str, Any]) -> dict[str, Any]:
             raise AgentError("delete 缺少路径")
         return {"action": "delete", "path": path, "label": str(raw.get("label") or "删除").strip()[:24]}
 
-    return {"action": "finish", "text": str(raw.get("text") or "").strip()[:120]}
+    # 收尾也是给用户看的正文，别按「一行摘要」切：120 字会在句子中间断掉
+    return {"action": "finish", "text": _clip(str(raw.get("text") or "").strip(), SAY_CHARS)}
 
 

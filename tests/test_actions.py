@@ -1,6 +1,6 @@
 import pytest
 
-from backend.actions import normalize
+from backend.actions import SAY_CHARS, normalize
 from backend.agent_error import AgentError
 
 
@@ -85,3 +85,19 @@ def test_say_keeps_code_block_over_200_chars():
     out = normalize({"action": "say", "text": code})
     assert out["text"] == code
     assert out["text"].endswith("```")
+
+
+def test_finish_keeps_full_summary():
+    """收尾那句是正文，不能按一行摘要切成半句（线上「…只对小数做收敛。现」）。"""
+    text = "又查出一处：toPrecision 会把大整数截断。已改为整数直接返回，只对小数做收敛。现在两份文件逻辑和断言一致。"
+    out = normalize({"action": "finish", "text": text})
+    assert out["text"] == text
+
+
+def test_overlong_text_gets_marked_not_silently_cut():
+    """真超过兜底上限时留省略号，别让人读到半句话还不知道断了。"""
+    text = "字" * (SAY_CHARS + 50)
+    for action in ("say", "finish", "decline"):
+        out = normalize({"action": action, "text": text})
+        assert out["text"].endswith("…")
+        assert len(out["text"]) <= SAY_CHARS + 1
