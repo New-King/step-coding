@@ -192,8 +192,8 @@ const EXAMPLES: { label: string; ask: string }[] = [
 const HISTORY_KEY = "stepcoding.history.v2";
 const SESSION_KEY = "stepcoding.session.v1";
 const CLIENT_KEY = "stepcoding.client.v1";
-/** 步骤浮层被拖到哪（相对代码卡片左上角），按屏幕记住 */
-const TOAST_POS_KEY = "stepcoding.toastpos.v1";
+/** 步骤浮层被拖到哪（相对窗口左上角），按屏幕记住 */
+const TOAST_POS_KEY = "stepcoding.toastpos.v2";
 
 /** 浏览器身份：只用来按设备算每日 token 额度，清掉缓存就等于换了个新额度 */
 function clientId() {
@@ -2030,6 +2030,7 @@ export default function App() {
     }
   });
   const toastPosRef = useRef<{ x: number; y: number } | null>(toastPos);
+  const toastRef = useRef<HTMLDivElement | null>(null);
   const toastDragRef = useRef<{
     x: number;
     y: number;
@@ -2057,15 +2058,14 @@ export default function App() {
 
   const toastMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = toastDragRef.current;
-    const card = e.currentTarget.parentElement;
-    if (!d || !card) return;
+    if (!d) return;
     // 手指抖一两像素不叫拖，照旧当点击
     if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
     d.moved = true;
-    const c = card.getBoundingClientRect();
     const r = e.currentTarget.getBoundingClientRect();
-    const x = Math.min(Math.max(0, e.clientX - c.left - d.dx), Math.max(0, c.width - r.width));
-    const y = Math.min(Math.max(0, e.clientY - c.top - d.dy), Math.max(0, c.height - r.height));
+    // 整个窗口都能放，只要求框的四个边不出去
+    const x = Math.min(Math.max(0, e.clientX - d.dx), Math.max(0, window.innerWidth - r.width));
+    const y = Math.min(Math.max(0, e.clientY - d.dy), Math.max(0, window.innerHeight - r.height));
     putToastPos({ x: Math.round(x), y: Math.round(y) });
   };
 
@@ -2086,6 +2086,29 @@ export default function App() {
       /* 隐私模式存不了：拖到哪儿只在这一次有效 */
     }
   };
+
+  /** 窗口变小 / 转屏后把框收回可见范围：位置是相对窗口的像素 */
+  const fitToast = () => {
+    const el = toastRef.current;
+    const p = toastPosRef.current;
+    if (!el || !p) return;
+    const x = Math.min(Math.max(0, p.x), Math.max(0, window.innerWidth - el.offsetWidth));
+    const y = Math.min(Math.max(0, p.y), Math.max(0, window.innerHeight - el.offsetHeight));
+    if (x !== p.x || y !== p.y) putToastPos({ x, y });
+  };
+
+  const toastMoved = toastPos !== null;
+
+  useEffect(() => {
+    if (!toastMoved) return;
+    fitToast();
+    window.addEventListener("resize", fitToast);
+    window.addEventListener("orientationchange", fitToast);
+    return () => {
+      window.removeEventListener("resize", fitToast);
+      window.removeEventListener("orientationchange", fitToast);
+    };
+  }, [toastMoved]);
 
   const exportZip = () => {
     // 重播中途导出的应该是完整结果，不是演到一半的文件
@@ -2435,15 +2458,16 @@ export default function App() {
             </div>
 
             <div
-              className={`step-toast ${stepActive || toastDone ? "in" : ""} ${
-                toastDone ? "done" : ""
-              } ${cardPop ? "changing" : ""} ${
+              className={`step-toast ${toastMoved ? "moved" : ""} ${
+                stepActive || toastDone ? "in" : ""
+              } ${toastDone ? "done" : ""} ${cardPop ? "changing" : ""} ${
                 snap.active && activeFile !== snap.active ? "can-follow" : ""
               }`}
+              ref={toastRef}
               role="button"
               tabIndex={stepActive || toastDone ? 0 : -1}
               title={snap.active ? "回到正在写的文件（按住可拖动）" : "按住可拖动"}
-              style={toastPos ? { left: toastPos.x, top: toastPos.y, right: "auto" } : undefined}
+              style={toastPos ? { left: toastPos.x, top: toastPos.y } : undefined}
               onPointerDown={toastDown}
               onPointerMove={toastMove}
               onPointerUp={toastUp}

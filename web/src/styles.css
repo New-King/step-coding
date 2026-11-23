@@ -1562,6 +1562,14 @@ html[data-theme="dark"] .ask-budget.over b {
   pointer-events: auto;
 }
 
+/* 拖过之后浮在窗口上：位置相对视口，不再被代码卡片裁掉 */
+.step-toast.moved {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 20;
+}
+
 .step-toast.can-follow:hover .grid-loader {
   color: var(--accent-hover);
 }
