@@ -24,6 +24,9 @@ from . import agent, search, session, trace, usage
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIST = ROOT / "web" / "dist"
 
+# 额度用完时给客户端的一句话（不暴露具体数字，也不区分单人还是全站）
+OUT_OF_BUDGET = "很抱歉，今日的 token 额度已经用完，明天再来吧～"
+
 app = FastAPI(title="Step Coding", version="3.0", description="看清它一步一步把东西做出来")
 
 
@@ -89,11 +92,11 @@ def post_step(body: StepIn, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="会话 id 不合法")
 
     key = _client_key(request)
+    # 全站总预算优先：不管是谁，加起来用完就都停
+    if usage.over_all():
+        raise HTTPException(status_code=429, detail=OUT_OF_BUDGET)
     if usage.over(key):
-        raise HTTPException(
-            status_code=429,
-            detail=f"今天的 token 额度（{usage.limit()}）用完了，明天再试",
-        )
+        raise HTTPException(status_code=429, detail=OUT_OF_BUDGET)
 
     sess = session.get(body.session_id)
     if sess is None:
@@ -197,6 +200,12 @@ def post_log(body: LogIn) -> dict[str, Any]:
 def delete_session(sid: str) -> dict[str, Any]:
     session.drop(sid)
     return {"ok": True}
+
+
+@app.get("/api/usage")
+def get_usage() -> dict[str, int]:
+    """首页右下角：今天全站用了多少 / 上限多少。"""
+    return usage.snapshot()
 
 
 @app.get("/api/health")

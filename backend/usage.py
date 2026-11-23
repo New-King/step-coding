@@ -1,7 +1,7 @@
 """按天记录 token 用量。
 
 一天一个文件：`var/usage/2026-11-20.json`，内容形如 `{"1.2.3.4|abc": 12345}`。
-跨天自动换文件，不需要清理任务，也不需要数据库。
+跨天自动换文件，换的时候顺手删掉旧文件（不存历史），不需要清理任务，也不需要数据库。
 """
 
 from __future__ import annotations
@@ -16,6 +16,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 STORE = ROOT / "var" / "usage"
 DEFAULT_LIMIT = 100_000
+# 全站一天的总预算：不管是谁、几台设备，加起来超过就都停下
+DEFAULT_TOTAL_LIMIT = 1_000_000
+# 和单设备计数存在同一份文件里；客户端键都带 IP，不会撞上这个
+TOTAL_KEY = "__total__"
 
 _lock = threading.Lock()
 
@@ -26,6 +30,14 @@ def limit() -> int:
         return max(0, int(os.environ.get("DAILY_TOKEN_LIMIT") or DEFAULT_LIMIT))
     except ValueError:
         return DEFAULT_LIMIT
+
+
+def total_limit() -> int:
+    """全站每天的总 token 预算，用 DAILY_TOTAL_LIMIT 改；0 表示不限制。"""
+    try:
+        return max(0, int(os.environ.get("DAILY_TOTAL_LIMIT") or DEFAULT_TOTAL_LIMIT))
+    except ValueError:
+        return DEFAULT_TOTAL_LIMIT
 
 
 def today() -> str:
@@ -43,7 +55,19 @@ def _path() -> Path:
     return STORE / f"{today()}.json"
 
 
+def _prune() -> None:
+    """只留今天那一份：过了零点，昨天及更早的文件随手删掉，不存历史。"""
+    keep = _path().name
+    try:
+        for path in STORE.glob("*.json"):
+            if path.name != keep:
+                path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _load() -> dict[str, Any]:
+    _prune()
     try:
         return json.loads(_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -63,6 +87,22 @@ def over(key: str) -> bool:
     return cap > 0 and used(key) >= cap
 
 
+def total() -> int:
+    """今天全站用了多少（所有设备加起来）。"""
+    return used(TOTAL_KEY)
+
+
+def over_all() -> bool:
+    """全站预算用完：不再接新的一步，跟是谁无关。"""
+    cap = total_limit()
+    return cap > 0 and total() >= cap
+
+
+def snapshot() -> dict[str, int]:
+    """首页右下角那一行要的数字。"""
+    return {"used": total(), "limit": total_limit()}
+
+
 def add(key: str, tokens: int) -> int:
     """记一笔，返回这个 key 今天累计用了多少。"""
     if tokens <= 0:
@@ -74,6 +114,10 @@ def add(key: str, tokens: int) -> int:
         except (TypeError, ValueError):
             total = tokens
         data[key] = total
+        try:
+            data[TOTAL_KEY] = int(data.get(TOTAL_KEY) or 0) + tokens
+        except (TypeError, ValueError):
+            data[TOTAL_KEY] = tokens
         try:
             STORE.mkdir(parents=True, exist_ok=True)
             path = _path()

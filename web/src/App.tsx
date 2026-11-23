@@ -283,6 +283,8 @@ export default function App() {
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  /** 全站今日额度：首页右下角那一行，也是「今天不能再聊」的依据 */
+  const [budget, setBudget] = useState<{ used: number; limit: number } | null>(null);
   const [cps, setCps] = useState(() => {
     const v = Number(new URLSearchParams(window.location.search).get("cps"));
     return Number.isFinite(v) && v > 0 ? v : 60;
@@ -815,7 +817,7 @@ export default function App() {
     } catch (e) {
       const msg = String(e).replace(/^Error:\s*/, "");
       note("session.error", msg);
-      setError(msg);
+      // 请求已经发出去了：错误跟着这一轮落在对话里，别带到首页去
       push({ action: "error", text: msg } as Event);
       statusRef.current = "done";
       setRunning(false);
@@ -893,7 +895,7 @@ export default function App() {
         push({ action: "say", text: msg, warn: true } as Event);
         stopRun();
       } else {
-        setError(msg);
+        // 接口报错只写进时间线：首页那行红字只留给「还没发请求」的本地拦截
         pushStep({ action: "error", text: msg } as Event);
         statusRef.current = "done";
         setRunning(false);
@@ -1278,9 +1280,39 @@ export default function App() {
     await pump();
   };
 
+  /** 全站今日额度（首页右下角那一行）。拿不到就不显示，不影响聊天。 */
+  const refreshBudget = async () => {
+    try {
+      const res = (await request("/api/usage", undefined, "GET")) as {
+        used: number;
+        limit: number;
+      };
+      if (typeof res?.limit === "number") setBudget({ used: res.used || 0, limit: res.limit });
+    } catch {
+      /* 旧版本后端没有这个接口：静默跳过 */
+    }
+  };
+
+  /** 全站预算用完就不再开口——后端也会拦，这里只是先把话说明白 */
+  const outOfBudget = !!budget && budget.limit > 0 && budget.used >= budget.limit;
+
+  // 回到首页（含刷新后首屏）就把今天的总额度取一次
+  useEffect(() => {
+    if (!started) void refreshBudget();
+  }, [started]);
+
   const send = async (text: string) => {
     const value = text.trim();
     if (!value) return;
+    if (outOfBudget) {
+      const sorry = "很抱歉，今日的 token 额度已经用完，明天再来吧～";
+      // 首页那行红字只属于「还没开口」；已经在对话里，就照常铺一句回去，
+      // 不然点了发送什么都不发生
+      if (started) push({ action: "say", text: sorry, warn: true } as Event);
+      else setError(sorry);
+      void refreshBudget();
+      return;
+    }
     setQuestion("");
     setComposerOpen(false);
 
@@ -1342,6 +1374,7 @@ export default function App() {
     if (itemsRef.current.length > 0) remember(filesRef.current);
     saveSession();
     note("stop", "本轮结束");
+    void refreshBudget();
   };
 
   /** 退出重播：还没演完的步骤一次性落到底，别把半截文件当成现场存下来 */
@@ -2123,6 +2156,13 @@ export default function App() {
 
           </div>
         </div>
+
+        {/* 全站今日额度：右下角一小行，用完变红 */}
+        {budget && budget.limit > 0 && (
+          <div className={`ask-budget ${budget.used >= budget.limit ? "over" : ""}`}>
+            今日 <b>{fmtTokens(budget.used)}</b> / {fmtTokens(budget.limit)}
+          </div>
+        )}
       </div>
     );
   }
@@ -2872,6 +2912,13 @@ function XIcon() {
   );
 }
 
+/** 额度按「万」写：62340 → 6.2 万，1000000 → 100 万 */
+function fmtTokens(n: number) {
+  if (n < 10_000) return String(n);
+  const w = n / 10_000;
+  return `${Math.round(w * 10) / 10} 万`;
+}
+
 function titleOf(text: string, max = 24) {
   const one = (text || "").replace(/\s+/g, " ").trim();
   if (!one) return "新项目";
@@ -3050,6 +3097,9 @@ function TimelineItem({
     );
   }
 
+  // 报错也是给用户看的正文：跟回话一样整段铺开，只露两行，超长时右下角一个问号复制原文
+  if (ev.action === "error") return <ErrorNote text={ev.text} />;
+
   // 正在等用户回答时，问题由下面的 ask-card 展示，时间线里先不重复
   if (ev.action === "ask" && live) return null;
 
@@ -3073,6 +3123,47 @@ function TimelineItem({
         {expandable && <span className={`tl-chevron ${open ? "open" : ""}`} aria-hidden />}
       </button>
       {expandable && open && <div className="tl-detail">{detail}</div>}
+    </div>
+  );
+}
+
+/** 报错：整段铺开只露两行，超出时右下角一个问号，点一下复制完整原文 */
+function ErrorNote({ text }: { text: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // 量一下有没有被 max-height 截掉：截了才给复制按钮
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) setClipped(el.scrollHeight > el.clientHeight + 1);
+  }, [text]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* 浏览器不给剪贴板权限（非 https 等）：静默放弃 */
+    }
+  };
+
+  return (
+    <div className="tl error-note">
+      <div className="err-body" ref={bodyRef}>
+        {text}
+      </div>
+      {clipped && (
+        <button
+          className="err-copy"
+          onClick={() => void copy()}
+          title={copied ? "已复制" : "复制完整报错"}
+          aria-label={copied ? "已复制" : "复制完整报错"}
+        >
+          {copied ? "✓" : "?"}
+        </button>
+      )}
     </div>
   );
 }
@@ -3180,7 +3271,6 @@ function detailOf(
 ): ReactNode | null {
   switch (ev.action) {
     case "think":
-    case "error":
     case "blocked":
       return ev.text ? <div className="tl-text">{ev.text}</div> : null;
 

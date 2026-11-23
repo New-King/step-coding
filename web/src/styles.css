@@ -1499,6 +1499,34 @@ html[data-theme="dark"] .ask-page .composer:focus-within {
   color: #b3261e;
 }
 
+/* 首页右下角：今天全站用了多少 / 上限。安静待着，别抢输入框的注意力 */
+.ask-budget {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.ask-budget b {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ask-budget.over,
+.ask-budget.over b {
+  color: #b3261e;
+}
+
+html[data-theme="dark"] .ask-budget.over,
+html[data-theme="dark"] .ask-budget.over b {
+  color: #f0a49c;
+}
+
 /* ---- 关系图：靠换行，不靠横向滚动 ---- */
 /* ---- 步骤浮层：弹簧进场 + 换成下一步时整块弹一下 ---- */
 .code-card {
@@ -2478,6 +2506,65 @@ html[data-theme="dark"] .tl.say.warn {
   background: #2e2022;
   border-color: #4a2b2c;
   color: #f0a49c;
+}
+
+/* ---- 报错：跟普通回话一样整段铺开，只露两行；超长时右下角一个问号复制原文 ---- */
+.tl.error-note {
+  position: relative;
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 9px 12px;
+  border-radius: 12px 12px 12px 4px;
+  background: #fdf4f3;
+  border: 1px solid #f0d6d3;
+  color: #8a2f26;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.err-body {
+  /* 两行：行高 1.65em，多出来的裁掉 */
+  max-height: 3.3em;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.err-copy {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: #fdf4f3;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.55;
+  cursor: pointer;
+  /* 底色向左拉一道渐隐，免得压住第二行末尾的字 */
+  box-shadow: -10px 0 8px #fdf4f3, -4px 0 4px #fdf4f3;
+  transition: opacity 0.16s var(--ease);
+}
+
+.err-copy:hover {
+  opacity: 1;
+}
+
+html[data-theme="dark"] .tl.error-note {
+  background: #2e2022;
+  border-color: #4a2b2c;
+  color: #f0a49c;
+}
+
+html[data-theme="dark"] .err-copy {
+  background: #2e2022;
+  box-shadow: -10px 0 8px #2e2022, -4px 0 4px #2e2022;
 }
 
 /* ---- 逐题追问 ---- */
