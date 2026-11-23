@@ -323,6 +323,8 @@ export default function App() {
   /** 吸附那一下要一段短过渡；拖动中不能有，否则手感和手指对不上 */
   const [snapping, setSnapping] = useState(false);
   const paneHRef = useRef<number | null>(null);
+  /** 上一次见到的窗口宽度：只有宽度变了才是转屏 / 改窗口，键盘弹出只改高度 */
+  const viewportWRef = useRef(window.innerWidth);
   const workspaceRef = useRef<HTMLElement | null>(null);
   const paneRef = useRef<HTMLElement | null>(null);
   const splitRef = useRef<{ y: number; h: number; max: number } | null>(null);
@@ -397,15 +399,34 @@ export default function App() {
     }
   };
 
-  /* 转屏 / 改窗口大小：像素值不再可靠，退回默认比例 */
+  /*
+   * 转屏 / 改窗口大小：像素值不再可靠，退回默认比例。
+   * 但手机上键盘弹出、地址栏伸缩也会触发 resize，只是高度变了 ——
+   * 这种情况必须保住手动拖出来的比例，不然一打字就「自己弹回去」。
+   */
   useEffect(() => {
     if (paneH === null) return;
-    const reset = () => putPaneH(null);
-    window.addEventListener("resize", reset);
-    window.addEventListener("orientationchange", reset);
+    const onResize = () => {
+      if (window.innerWidth === viewportWRef.current) {
+        // 只改了高度：比例留着，超出去的部分收进可视区
+        const space = splitSpace();
+        if (space && paneHRef.current !== null && paneHRef.current > space.max) {
+          putPaneH(space.max);
+        }
+        return;
+      }
+      viewportWRef.current = window.innerWidth;
+      putPaneH(null);
+    };
+    const onTurn = () => {
+      viewportWRef.current = window.innerWidth;
+      putPaneH(null);
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onTurn);
     return () => {
-      window.removeEventListener("resize", reset);
-      window.removeEventListener("orientationchange", reset);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onTurn);
     };
   }, [paneH]);
 
@@ -1304,17 +1325,27 @@ export default function App() {
   const send = async (text: string) => {
     const value = text.trim();
     if (!value) return;
+
+    // 先把这一句收好：清空输入、收起手机上的输入浮层。
+    // 额度用完也必须走这一步 —— 之前直接 return，消息没上屏、遮罩还盖着整个对话区，
+    // 看起来就是「点了没反应 + 对话区卡死」
+    setQuestion("");
+    setComposerOpen(false);
+
     if (outOfBudget) {
       const sorry = "很抱歉，今日的 token 额度已经用完，明天再来吧～";
-      // 首页那行红字只属于「还没开口」；已经在对话里，就照常铺一句回去，
-      // 不然点了发送什么都不发生
-      if (started) push({ action: "say", text: sorry, warn: true } as Event);
-      else setError(sorry);
+      if (started) {
+        // 跟正常对话一样：自己这句先上屏，再回一句
+        push({ action: "user", text: value } as Event);
+        push({ action: "say", text: sorry, warn: true } as Event);
+        stickLog();
+        saveSession();
+      } else {
+        setError(sorry);
+      }
       void refreshBudget();
       return;
     }
-    setQuestion("");
-    setComposerOpen(false);
 
     // 底部输入框不是「回答问题」的入口。卡片还开着时从这儿说话 = 这组问题先不答，
     // 直接把卡片撤掉、按新指令走。要逐题回答只能在卡片里点选项或填写：
@@ -2375,6 +2406,11 @@ export default function App() {
           <div
             className="chat-log"
             ref={logRef}
+            onClick={() => {
+              // 手机上输入浮层展开时，点内容就算「收起」。
+              // 以前是盖一层透明遮罩按钮，那层会把滚动一起吃掉 —— 看着就是对话区卡死
+              if (composerOpen) setComposerOpen(false);
+            }}
             onScroll={() => {
               const el = logRef.current;
               if (el) logStickRef.current = nearBottom(el);
@@ -2473,14 +2509,6 @@ export default function App() {
             )}
 
           </div>
-          {composerOpen && (
-            <button
-              className="chat-scrim"
-              onClick={() => setComposerOpen(false)}
-              aria-label="收起输入框"
-              tabIndex={-1}
-            />
-          )}
           <div className="chat-foot">
             {composer({ autoFocus: true })}
           </div>

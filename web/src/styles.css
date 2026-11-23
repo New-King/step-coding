@@ -1005,8 +1005,7 @@ html[data-theme="dark"] .composer:focus-within {
 }
 
 /* 手机端的悬浮输入按钮，桌面上不出现 */
-.fab,
-.chat-scrim {
+.fab {
   display: none;
 }
 
@@ -3354,17 +3353,6 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     opacity: 0;
     transform: scale(0.86);
     pointer-events: none;
-  }
-
-  /* 展开时点对话区收起，不留一个只能靠发消息才能关的输入框 */
-  .chat-scrim {
-    display: block;
-    position: absolute;
-    inset: 0;
-    z-index: 3;
-    background: transparent;
-    border: 0;
-    cursor: default;
   }
 
   /* 代码区的文件标题条同理，代码从它下面滚过去 */
