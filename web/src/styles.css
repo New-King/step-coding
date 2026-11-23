@@ -1544,7 +1544,10 @@ html[data-theme="dark"] .ask-budget.over b {
   background: var(--surface);
   border: 1px solid var(--line);
   color: var(--ink);
-  cursor: pointer;
+  cursor: grab;
+  /* 按住能拖走：拖动时别让页面跟着滚、也别选中文字 */
+  touch-action: none;
+  user-select: none;
   /* 浅底上别再压重影：留一点点浮起来的意思就够了 */
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.04)) drop-shadow(0 8px 22px rgba(0, 0, 0, 0.12));
   transform: translateX(calc(100% + 28px));
@@ -3353,6 +3356,44 @@ html[data-theme="dark"] .line .acts button.danger:hover {
     opacity: 0;
     transform: scale(0.86);
     pointer-events: none;
+  }
+
+  /*
+   * 步骤浮层：手机屏太窄，原尺寸会压掉半屏代码。
+   * 先收小一档，按住还能拖到空白处，位置记在本地。
+   */
+  .step-toast {
+    top: 46px;
+    right: 8px;
+    gap: 8px;
+    padding: 6px 12px 6px 8px;
+    border-radius: 12px;
+  }
+
+  .step-toast:active {
+    cursor: grabbing;
+  }
+
+  .step-toast .st-tile {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+  }
+
+  .step-toast .st-check {
+    width: 16px;
+    height: 16px;
+  }
+
+  .step-toast .st-stack {
+    height: 26px;
+    min-width: 0;
+    max-width: 44vw;
+  }
+
+  .step-toast .st-text,
+  .step-toast .st-ghost {
+    font-size: 12.5px;
   }
 
   /* 代码区的文件标题条同理，代码从它下面滚过去 */

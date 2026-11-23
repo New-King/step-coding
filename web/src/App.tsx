@@ -192,6 +192,8 @@ const EXAMPLES: { label: string; ask: string }[] = [
 const HISTORY_KEY = "stepcoding.history.v2";
 const SESSION_KEY = "stepcoding.session.v1";
 const CLIENT_KEY = "stepcoding.client.v1";
+/** 步骤浮层被拖到哪（相对代码卡片左上角），按屏幕记住 */
+const TOAST_POS_KEY = "stepcoding.toastpos.v1";
 
 /** 浏览器身份：只用来按设备算每日 token 额度，清掉缓存就等于换了个新额度 */
 function clientId() {
@@ -2013,6 +2015,78 @@ export default function App() {
     if (snap.active) setPeek(null);
   };
 
+  /*
+   * 手机上步骤浮层会压住代码：按住能把它拖到空白处，位置按屏幕记住。
+   * 移动不到 6px 仍算点击（回到正在写的文件），拖动中不触发。
+   */
+  const [toastPos, setToastPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(TOAST_POS_KEY) || "null") as
+        | { x?: unknown; y?: unknown }
+        | null;
+      return typeof v?.x === "number" && typeof v?.y === "number" ? { x: v.x, y: v.y } : null;
+    } catch {
+      return null;
+    }
+  });
+  const toastPosRef = useRef<{ x: number; y: number } | null>(toastPos);
+  const toastDragRef = useRef<{
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    moved: boolean;
+  } | null>(null);
+
+  const putToastPos = (v: { x: number; y: number }) => {
+    toastPosRef.current = v;
+    setToastPos(v);
+  };
+
+  const toastDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    toastDragRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      dx: e.clientX - r.left,
+      dy: e.clientY - r.top,
+      moved: false,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const toastMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = toastDragRef.current;
+    const card = e.currentTarget.parentElement;
+    if (!d || !card) return;
+    // 手指抖一两像素不叫拖，照旧当点击
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+    d.moved = true;
+    const c = card.getBoundingClientRect();
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(Math.max(0, e.clientX - c.left - d.dx), Math.max(0, c.width - r.width));
+    const y = Math.min(Math.max(0, e.clientY - c.top - d.dy), Math.max(0, c.height - r.height));
+    putToastPos({ x: Math.round(x), y: Math.round(y) });
+  };
+
+  const toastUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = toastDragRef.current;
+    toastDragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (!d) return;
+    if (!d.moved) {
+      followWriting();
+      return;
+    }
+    try {
+      localStorage.setItem(TOAST_POS_KEY, JSON.stringify(toastPosRef.current));
+    } catch {
+      /* 隐私模式存不了：拖到哪儿只在这一次有效 */
+    }
+  };
+
   const exportZip = () => {
     // 重播中途导出的应该是完整结果，不是演到一半的文件
     stopReplay();
@@ -2368,8 +2442,12 @@ export default function App() {
               }`}
               role="button"
               tabIndex={stepActive || toastDone ? 0 : -1}
-              title={snap.active ? "回到正在写的文件" : ""}
-              onClick={followWriting}
+              title={snap.active ? "回到正在写的文件（按住可拖动）" : "按住可拖动"}
+              style={toastPos ? { left: toastPos.x, top: toastPos.y, right: "auto" } : undefined}
+              onPointerDown={toastDown}
+              onPointerMove={toastMove}
+              onPointerUp={toastUp}
+              onPointerCancel={toastUp}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
